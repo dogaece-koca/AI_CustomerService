@@ -1,12 +1,11 @@
+from flask import Flask, request, jsonify, render_template
 import os
 import sqlite3
-from flask import Flask, request, jsonify
-
 app = Flask(__name__)
 
 @app.route('/')
 def ana_sayfa():
-    return "Sistem ve Veritabanı Aktif! Dialogflow buraya bağlanabilir."
+    return render_template('index.html')
 
 # Veritabanı dosyasının yolu (Setup dosyasının oluşturduğu dosya)
 DB_PATH = os.path.join(os.path.dirname(__file__), 'sirket_veritabani.db')
