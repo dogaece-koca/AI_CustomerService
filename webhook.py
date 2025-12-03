@@ -4,6 +4,10 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+@app.route('/')
+def ana_sayfa():
+    return "Sistem ve Veritabanı Aktif! Dialogflow buraya bağlanabilir."
+
 # Veritabanı dosyasının yolu (Setup dosyasının oluşturduğu dosya)
 DB_PATH = os.path.join(os.path.dirname(__file__), 'sirket_veritabani.db')
 
