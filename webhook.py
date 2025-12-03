@@ -1,92 +1,138 @@
+import os
+import sqlite3
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# --- 1. DİNAMİK VERİ TABANI SİMÜLASYONU ---
-# Bu sözlükler normalde veritabanı sorgularınızın yerini tutar.
-SIPARIS_DURUMU = {
-    '1234': 'bugün kargoya verilmiştir.',
-    '55674': '2 gün önce teslim edilmiştir.',
-    '9999': 'şu an hazırlanıyor.'
-}
-IADE_BILGISI = {
-    'standart': 'Tüm ürünlerde iade süresi 15 gündür. Ücretsiz kargo kodu: IADE2025',
-    'indirimli': 'İndirimli ürünlerde iade süresi 7 iş günüdür.'
-}
+# Veritabanı dosyasının yolu (Setup dosyasının oluşturduğu dosya)
+DB_PATH = os.path.join(os.path.dirname(__file__), 'sirket_veritabani.db')
 
 
-# --- 2. NİYETE ÖZEL İŞLEYİCİ FONKSİYONLAR ---
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row  # Sütun isimleriyle erişim sağlar
+    return conn
 
-def isleyici_siparis_sorgulama(parameters):
-    """'Siparis_Sorgulama' niyeti için dinamik cevap üretir."""
 
-    kargo_numarasi = parameters.get('kargo_numarasi')
+# --- FONKSİYON 1: DETAYLI KARGO SORGULAMA ---
+def kargo_bilgisi_getir(takip_no_veya_siparis_no):
+    conn = get_db_connection()
 
-    # 1. PARAMETRE KONTROLÜ
-    if not kargo_numarasi:
-        # Dialogflow parametreyi yakalayamazsa
-        return "Lütfen sorgulamak istediğiniz 4 haneli sipariş numarasını belirtin."
+    # Yeni yapıya uygun JOIN sorgusu (Hareketler, Şubeler, Kuryeler, Durum Tanımları)
+    query = """
+        SELECT 
+            k.takip_no, 
+            m.ad_soyad AS musteri,
+            hc.durum_adi,     -- ID yerine metin (Örn: DAGITIMDA)
+            hc.aciklama,      -- Durum açıklaması
+            s.sube_adi,       -- Hangi şubede?
+            s.telefon AS sube_tel,
+            kr.ad_soyad AS kurye, -- Hangi kuryede?
+            kr.puan AS kurye_puan,
+            k.tahmini_teslim
+        FROM kargo_takip k
+        JOIN siparisler sip ON k.siparis_no = sip.siparis_no
+        JOIN musteriler m ON sip.musteri_id = m.musteri_id
+        LEFT JOIN hareket_cesitleri hc ON k.durum_id = hc.id
+        LEFT JOIN subeler s ON k.su_anki_sube_id = s.sube_id
+        LEFT JOIN kuryeler kr ON k.atanan_kurye_id = kr.kurye_id
+        WHERE k.takip_no = ? OR k.siparis_no = ?
+    """
 
-    # 2. VERİ TABANI SORGULAMA (Simülasyon)
-    if kargo_numarasi in SIPARIS_DURUMU:
-        durum = SIPARIS_DURUMU[kargo_numarasi]
-        return f"{kargo_numarasi} numaralı siparişiniz {durum}"
+    row = conn.execute(query, (takip_no_veya_siparis_no, takip_no_veya_siparis_no)).fetchone()
+    conn.close()
+
+    if not row:
+        return "Bu numaraya ait bir kayıt bulamadım. Lütfen sipariş veya takip numaranızı kontrol edin."
+
+    # Duruma göre akıllı cevap oluşturma
+    cevap = f"Sayın {row['musteri']}, kargonuzun durumu: {row['durum_adi']} ({row['aciklama']}).\n"
+
+    if row['durum_adi'] == 'DAGITIMDA':
+        cevap += f"Kargonuz şu an {row['kurye']} isimli kuryemizde (Puanı: {row['kurye_puan']}). Gün içinde teslim edilecek."
+    elif row['durum_adi'] == 'SUBEDE':
+        cevap += f"Kargonuz {row['sube_adi']} şubemizde bekliyor. İletişim: {row['sube_tel']}."
+    elif row['durum_adi'] == 'TESLIM_EDILDI':
+        cevap += "Teslimat başarıyla gerçekleşmiş görünüyor. Bizi tercih ettiğiniz için teşekkürler."
+
+    return cevap
+
+
+# --- FONKSİYON 2: DİNAMİK FİYAT HESAPLAMA ---
+def fiyat_hesapla(desi, nereye_gidecek):
+    conn = get_db_connection()
+
+    # 1. Parametreleri Çek
+    params = conn.execute("SELECT parametre_adi, deger FROM fiyat_parametreleri").fetchall()
+    param_dict = {p['parametre_adi']: p['deger'] for p in params}
+
+    conn.close()
+
+    # Parametreleri değişkenlere ata
+    baz_ucret = param_dict.get('baz_ucret', 30.0)
+    birim_ucret = param_dict.get('desi_birim_ucret', 5.0)
+
+    # 2. Çarpan Belirle (Basit mantık)
+    # Dialogflow'dan 'sehir_ici', 'yakin', 'uzak' gelirse harika olur.
+    # Gelmezse varsayılan olarak 'uzak' kabul edelim.
+    if 'istanbul' in nereye_gidecek.lower() or 'içi' in nereye_gidecek.lower():
+        carpan = param_dict.get('carpan_sehir_ici', 1.0)
+    elif 'ankara' in nereye_gidecek.lower() or 'izmir' in nereye_gidecek.lower():
+        carpan = param_dict.get('carpan_yakin_sehir', 1.5)
     else:
-        return f"Üzgünüm, {kargo_numarasi} numarasına ait güncel bir sipariş bilgisi bulunamadı."
+        carpan = param_dict.get('carpan_uzak_sehir', 2.2)
 
+    # 3. Formül: (Baz + (Desi * Birim)) * Çarpan
+    try:
+        desi = float(desi)
+        ham_fiyat = baz_ucret + (desi * birim_ucret)
+        son_fiyat = ham_fiyat * carpan
 
-def isleyici_iade_sureci(parameters):
-    """'Iade_Sureci' niyeti için dinamik/statik cevap üretir."""
+        return f"{desi} desi için {nereye_gidecek} bölgesine tahmini kargo ücretiniz: {son_fiyat:.2f} TL'dir."
+    except ValueError:
+        return "Fiyat hesaplayabilmem için desiyi sayı olarak girmelisiniz."
 
-    # Not: İade türü gibi başka bir parametre de çekilebilir, şimdilik statik cevap verelim.
-
-    # 1. DİNAMİK/STATİK BİLGİ KOMBİNASYONU
-    statik_bilgi = IADE_BILGISI['standart']
-    dinamik_ek = " İhtiyaç duyarsanız, canlı desteğe bağlanmak için 'Canlı Destek' yazabilirsiniz."
-
-    return statik_bilgi + dinamik_ek
-
-
-# --- 3. NİYET EŞLEME SÖZLÜĞÜ (Dispatcher) ---
-
-# Gelen niyet adını, işleyecek fonksiyona yönlendirir.
-INTENT_HANDLERS = {
-    'Siparis_Sorgulama': isleyici_siparis_sorgulama,
-    'Iade_Sureci': isleyici_iade_sureci,
-    # GELECEKTEKİ NİYETLERİNİZİ BURAYA EKLEYİN
-    # 'Fatura_Talebi': isleyici_fatura_talebi,
-}
-
-
-# --- 4. ANA WEBHOOK GİRİŞ NOKTASI ---
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     req = request.get_json(silent=True, force=True)
 
+    # Dialogflow'dan gelen veriler
     try:
         intent_name = req['queryResult']['intent']['displayName']
         parameters = req['queryResult']['parameters']
+    except (KeyError, TypeError):
+        return jsonify({"fulfillmentText": "Veri yapısı anlaşılamadı."})
 
-        # Eğer niyet sözlükte varsa, ilgili fonksiyonu çalıştır
-        if intent_name in INTENT_HANDLERS:
-            # Fonksiyonu parametrelerle çağır
-            fulfillmentText = INTENT_HANDLERS[intent_name](parameters)
+    response_text = "Bunu tam anlayamadım."
+
+    # --- INTENT YÖNLENDİRMESİ ---
+
+    if intent_name == 'Siparis_Sorgulama':
+        # Dialogflow parametresi: 'siparis_no'
+        no = parameters.get('siparis_no')
+        if no:
+            response_text = kargo_bilgisi_getir(no)
         else:
-            # İşleyicisi tanımlanmamış niyetler için yedek
-            fulfillmentText = "Üzgünüm, bu konuyu dinamik olarak işleyecek bir fonksiyon henüz tanımlanmadı."
+            response_text = "Sipariş numaranızı alabilir miyim?"
 
-    except Exception as e:
-        # Hata durumunda kullanıcı dostu bir mesaj döndür
-        print(f"Hata oluştu: {e}")
-        fulfillmentText = "Sunucu tarafında bir hata oluştu. Lütfen daha sonra tekrar deneyin."
+    elif intent_name == 'Fiyat_Sorgulama':
+        # Dialogflow parametreleri: 'desi' (number), 'sehir' (geo-city veya string)
+        desi = parameters.get('desi')
+        sehir = parameters.get('sehir', 'uzak')  # Şehir girilmezse uzak kabul et
 
-    # Dialogflow'a JSON cevabını geri gönder
+        if desi:
+            response_text = fiyat_hesapla(desi, str(sehir))
+        else:
+            response_text = "Fiyat hesaplamam için kargonun desi bilgisini söylemeniz gerekiyor."
+
+    # Diğer intentler (Selamlama vb.) Dialogflow içinde statik halledilebilir
+    # veya buraya eklenebilir.
+
     return jsonify({
-        'fulfillmentText': fulfillmentText
+        "fulfillmentText": response_text
     })
 
 
 if __name__ == '__main__':
-    # Production ortamına dağıtırken bu kısmı kullanmayız
-    app.run(debug=True, port=5000)
+    app.run(debug=True)
