@@ -28,6 +28,7 @@
             flex-direction: column;
             overflow: hidden;
             border: 1px solid #e5e7eb;
+            position: relative;
         }
 
         .chat-header {
@@ -38,6 +39,40 @@
             align-items: center;
             gap: 10px;
             font-weight: 600;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Konuşma Animasyonu (Pulse) */
+        .chat-header .icon-wrapper {
+            width: 35px;
+            height: 35px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.3s;
+        }
+
+        .speaking .icon-wrapper {
+            background: #fff;
+            color: #2563eb;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+        }
+
+        /* Durum Metni (Dinliyor/Konuşuyor) */
+        .status-text {
+            font-size: 12px;
+            opacity: 0.8;
+            font-weight: normal;
+            margin-left: auto;
         }
 
         .chat-messages {
@@ -80,6 +115,7 @@
             border-top: 1px solid #e5e7eb;
             display: flex;
             gap: 10px;
+            align-items: center;
         }
 
         .chat-input {
@@ -88,39 +124,84 @@
             border: 1px solid #d1d5db;
             border-radius: 25px;
             outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .chat-input:focus {
+            border-color: #2563eb;
+        }
+
+        .action-btn {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s;
         }
 
         .send-btn {
             background: #2563eb;
             color: white;
-            border: none;
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            cursor: pointer;
-            display: flex;
-            justify-content: center;
-            align-items: center;
         }
+
+        .send-btn:hover { background: #1d4ed8; }
+
+        /* Mikrofon Butonu */
+        .mic-btn {
+            background: #f3f4f6;
+            color: #4b5563;
+        }
+
+        .mic-btn:hover { background: #e5e7eb; }
+
+        .mic-btn.listening {
+            background: #ef4444;
+            color: white;
+            animation: pulse-red 1.5s infinite;
+        }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
     </style>
 </head>
 <body>
 
     <div class="chat-container">
-        <div class="chat-header">
-            <i class="fas fa-volume-up"></i>
-            <div>Sesli Kargo Asistanı</div>
+        <div class="chat-header" id="chatHeader">
+            <div class="icon-wrapper">
+                <i class="fas fa-robot"></i>
+            </div>
+            <div>
+                <div>Kargo Asistanı</div>
+                <div id="statusText" class="status-text" style="display:none; font-size:10px;">Çevrimiçi</div>
+            </div>
         </div>
 
         <div class="chat-messages" id="messagesBox">
             <div class="message bot">
-                Merhaba! Ben sesli asistan. Kargo numaranı söylersen yardımcı olabilirim.
+                Merhaba! Ben sesli asistan. Mikrofon butonuna basıp konuşabilirsin. 🎙️
             </div>
         </div>
 
         <div class="chat-input-area">
-            <input type="text" id="userInput" class="chat-input" placeholder="Bir şeyler yazın..." autocomplete="off">
-            <button onclick="sendMessage()" class="send-btn"><i class="fas fa-paper-plane"></i></button>
+            <!-- Mikrofon Butonu -->
+            <button id="micBtn" class="action-btn mic-btn" onclick="toggleMic()">
+                <i class="fas fa-microphone"></i>
+            </button>
+
+            <input type="text" id="userInput" class="chat-input" placeholder="Yazın veya konuşun..." autocomplete="off">
+
+            <button onclick="sendMessage()" class="action-btn send-btn">
+                <i class="fas fa-paper-plane"></i>
+            </button>
         </div>
     </div>
 
@@ -131,7 +212,63 @@
         const inputField = document.getElementById('userInput');
         const messagesBox = document.getElementById('messagesBox');
         const audioPlayer = document.getElementById('audioPlayer');
+        const chatHeader = document.getElementById('chatHeader');
+        const statusText = document.getElementById('statusText');
+        const micBtn = document.getElementById('micBtn');
 
+        // --- SESLİ KOMUT (SPEECH TO TEXT) ---
+        let recognition;
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.lang = 'tr-TR';
+            recognition.continuous = false;
+            recognition.interimResults = false;
+
+            recognition.onstart = function() {
+                micBtn.classList.add('listening');
+                inputField.placeholder = "Dinliyorum...";
+                statusText.innerText = "Dinliyor...";
+                statusText.style.display = 'block';
+            };
+
+            recognition.onend = function() {
+                micBtn.classList.remove('listening');
+                inputField.placeholder = "Yazın veya konuşun...";
+                statusText.style.display = 'none';
+            };
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                inputField.value = transcript;
+                // Otomatik gönder (Opsiyonel: Kullanıcı kontrol etsin isterseniz bu satırı silin)
+                setTimeout(sendMessage, 500);
+            };
+        } else {
+            micBtn.style.display = 'none'; // Tarayıcı desteklemiyorsa butonu gizle
+            console.log("Web Speech API desteklenmiyor.");
+        }
+
+        function toggleMic() {
+            if (micBtn.classList.contains('listening')) {
+                recognition.stop();
+            } else {
+                recognition.start();
+            }
+        }
+
+        // --- SES OYNATMA GÖRSELİ ---
+        audioPlayer.onplay = function() {
+            chatHeader.classList.add('speaking');
+            statusText.innerText = "Konuşuyor...";
+            statusText.style.display = 'block';
+        };
+
+        audioPlayer.onended = function() {
+            chatHeader.classList.remove('speaking');
+            statusText.style.display = 'none';
+        };
+
+        // --- MESAJ GÖNDERME ---
         inputField.addEventListener("keypress", function(event) {
             if (event.key === "Enter") sendMessage();
         });
@@ -157,11 +294,11 @@
                 loadingDiv.remove();
                 addMessage(data.response, 'bot');
 
-                // --- SES OYNATMA KISMI ---
                 if (data.audio) {
-                    // Tarayıcı önbelleğini aşmak için timestamp ekliyoruz
                     audioPlayer.src = data.audio + "?t=" + new Date().getTime();
-                    audioPlayer.play().catch(e => console.log("Otomatik oynatma engellendi, etkileşim gerekebilir.", e));
+                    // Kullanıcı etkileşimi olmadan ses bazen engellenir,
+                    // ama butona basıldığı için sorun olmayacaktır.
+                    audioPlayer.play().catch(e => console.log("Otomatik oynatma hatası:", e));
                 }
 
             } catch (error) {
