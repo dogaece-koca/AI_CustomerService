@@ -182,10 +182,8 @@ def chat_api():
     user_message = data.get('message', '').strip()
     session_id = data.get('session_id', str(uuid.uuid4()))
 
-    # Gemini Router'a gönder (Dialogflow yok!)
     final_response = process_with_gemini(session_id, user_message)
 
-    # Sese çevir
     audio_url = metni_sese_cevir(final_response)
 
     return jsonify({"response": final_response, "audio": audio_url})
