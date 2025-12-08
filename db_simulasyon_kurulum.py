@@ -38,7 +38,7 @@ def create_simulation_db():
         (8, 'IPTAL EDILDI')
     ])
 
-    # 3. SİPARİŞLER (2 Adet Sipariş Ekliyoruz)
+    # 3. SİPARİŞLER
     cursor.execute('''
         CREATE TABLE siparisler (
             siparis_no TEXT PRIMARY KEY,

@@ -341,10 +341,6 @@ def sube_sorgula(lokasyon):
 
 
 def en_yakin_sube_bul(kullanici_adresi, bilgi_turu="adres"):
-    """
-    1. Kullanıcının adresine göre en yakın şubeyi bulur.
-    2. Niyetine (saat, telefon, adres) göre ilgili fonksiyonu o şube ismiyle çağırır.
-    """
     if not kullanici_adresi: return "Size en yakın şubeyi bulabilmem için lütfen bulunduğunuz İl ve İlçeyi söyler misiniz?"
 
     conn = get_db_connection()
@@ -520,6 +516,15 @@ def process_with_gemini(session_id, user_message):
 
     --- SENARYO 1: KULLANICI DOĞRULANMAMIŞ İSE (MİSAFİR) ---
     Eğer 'DURUM: MİSAFİR KULLANICI' ise:
+    
+    # "EN YAKIN" İFADESİ GEÇİYORSA (EN ÖNEMLİ KURAL)
+       - Kullanıcı "en yakın", "bana yakın" kelimelerini kullanıyorsa:
+         - "En yakın şubenin telefonu?", "En yakın şubeyi aramak istiyorum" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "", "bilgi_turu": "telefon" }} }}
+         - "En yakın şube saatleri?", "Kaça kadar açık?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "", "bilgi_turu": "saat" }} }}
+         - "En yakın şube nerede?", "Adresi ne?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "", "bilgi_turu": "adres" }} }}
+         (Eğer aynı cümlede adres de verdiyse 'kullanici_adresi'ne yaz, yoksa boş bırak).
+       
+    # "EN YAKIN" İFADESİ GEÇMİYORSA
        # ŞUBE ADRES/KONUM SORGUSU
        - "Şubeniz nerede?", "Kadıköy şubesi adresi"
        -> {{ "type": "action", "function": "sube_sorgula", "parameters": {{ "lokasyon": "..." }} }}
@@ -535,10 +540,6 @@ def process_with_gemini(session_id, user_message):
        -> {{ "type": "action", "function": "sube_telefon_sorgula", "parameters": {{ "lokasyon": "..." }} }}
        (Lokasyon yoksa boş string gönder).
        
-       # EN YAKIN ŞUBE BULMA (YENİ VE GELİŞMİŞ)
-       - "Bana en yakın şube nerede?", "Kadıköy'deyim en yakın şubeniz?" -> bilgi_turu="adres"
-       - "Bana en yakın şube kaça kadar açık?", "Kadıköy'deyim en yakın şubenin saati?" -> bilgi_turu="saat"
-       - "Bana en yakın şubenin telefonu?" -> bilgi_turu="telefon"
        
     1. Kullanıcı bu belirtilen durumlar haricinde ne sorarsa sorsun (Kargo, şikayet, adres), ÖNCE KİMLİK DOĞRULAMA akışını tamamla.
     2. Sırayla eksik bilgileri iste (Ad -> Takip No -> Telefon).
