@@ -37,7 +37,6 @@ def get_db_connection():
     return conn
 
 # --- DB İŞLEMLERİ ---
-
 def metin_temizle(text):
     if not text: return ""
     text = text.lower()
@@ -295,6 +294,41 @@ def alici_adi_degistir(no, yeni_isim):
     return f"Kargonuzun alıcı adı '{yeni_isim}' olarak güncellenmiştir. Kurye bilgilendirildi."
 
 
+def yanlis_teslimat_bildirimi(no, dogru_adres, musteri_id):
+
+    if not no: return "Takip numarası bulunamadı."
+    if not dogru_adres: return "Lütfen kargonun gitmesi gereken DOĞRU adresi belirtin."
+
+    safe_id = musteri_id if musteri_id else 0
+    conn = get_db_connection()
+    try:
+
+        query = "SELECT teslim_adresi FROM kargo_takip WHERE takip_no = ? OR siparis_no = ?"
+        row = conn.execute(query, (no, no)).fetchone()
+
+        mevcut_yanlis_adres = row['teslim_adresi'] if row else "Bilinmiyor"
+
+        konu_metni = f"YANLIŞ TESLİMAT: Kargo '{mevcut_yanlis_adres}' yerine '{dogru_adres}' adresine gitmeliydi."
+        bugun = datetime.now().strftime('%Y-%m-%d')
+
+        conn.execute(
+            "INSERT INTO sikayetler (siparis_no, olusturan_musteri_id, konu, tarih, durum) VALUES (?, ?, ?, ?, 'ACIL_INCELENECEK')",
+            (no, safe_id, konu_metni, bugun)
+        )
+        conn.commit()
+
+        sikayet_no = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        return (f"Durum anlaşıldı. Kargonuzun '{mevcut_yanlis_adres}' konumuna yönlendirildiği görülüyor. "
+                f"Sisteme '{dogru_adres}' olması gerektiği bilgisini 'ACİL' koduyla işledim. "
+                f"Operasyon ekibimiz kargoyu doğru adrese yönlendirmek için ivedilikle devreye girecektir. Dosya No: #{sikayet_no}")
+
+    except Exception as e:
+        return f"Hata: {e}"
+    finally:
+        conn.close()
+
+
 def sube_sorgula(lokasyon):
     conn = get_db_connection()
     try:
@@ -486,25 +520,31 @@ def process_with_gemini(session_id, user_message):
         'user_id': None
     }
 
+    default_session = {'history': [], 'verified': False, 'tracking_no': None, 'user_name': None, 'role': None,
+                       'user_id': None, 'pending_intent': None}
     session_data = user_sessions.get(session_id, default_session)
     for k, v in default_session.items():
-        if k not in session_data:
-            session_data[k] = v
-
+        if k not in session_data: session_data[k] = v
 
     history = session_data['history'][-10:]
-
     is_verified = session_data['verified']
     saved_no = session_data['tracking_no']
     user_role = session_data['role']
     user_id = session_data['user_id']
+    pending_intent = session_data.get('pending_intent')
 
     status_prompt = ""
     if is_verified:
         rol_adi = "Gönderici" if user_role == 'gonderici' else "Alıcı"
         status_prompt = f"DURUM: KULLANICI DOĞRULANDI. Müşteri: {session_data.get('user_name')} ({rol_adi}). Aktif No: {saved_no}."
-    else:
-        status_prompt = "DURUM: MİSAFİR KULLANICI. Kimlik doğrulanmadı. Hiçbir kargo bilgisi verme. Önce kimlik doğrula."
+    else:  status_prompt = f"DURUM: MİSAFİR. Kimlik doğrulanmadı."
+
+    if not is_verified and pending_intent:
+        final_user_message = f"""{user_message} 
+            (SİSTEM NOTU: Kullanıcı daha önce '{pending_intent}' yapmak istediğini belirtti. 
+            Geçmiş sohbeti kontrol et. Orada Ad/Soyad veya Telefon varsa ve şu an eksik parçayı (Numara vb.) verdiyse, 
+            soru sorma! Direkt 'kimlik_dogrula' fonksiyonunu çağır.)"""
+
 
     system_prompt = f"""
     GÖREV: Hızlı Kargo sesli asistanısın. {status_prompt}
@@ -512,46 +552,44 @@ def process_with_gemini(session_id, user_message):
     ÖN İŞLEM: Tek tek söylenen sayıları birleştir (bir iki üç -> 123).
     ÇIKTI: Sadece JSON.
 
-    ANALİZ KURALLARI (ÖNCELİK SIRASINA GÖRE):
+    ANALİZ KURALLARI VE ÖNCELİKLERİ:
 
     --- SENARYO 1: KULLANICI DOĞRULANMAMIŞ İSE (MİSAFİR) ---
     Eğer 'DURUM: MİSAFİR KULLANICI' ise:
-    
-    # "EN YAKIN" İFADESİ GEÇİYORSA (EN ÖNEMLİ KURAL)
+
+    1. --- EN YÜKSEK ÖNCELİK: GENEL SORGULAR (KİMLİK GEREKMEZ) ---
+       
+       # "EN YAKIN" İFADESİ GEÇİYORSA (KRİTİK):
        - Kullanıcı "en yakın", "bana yakın" kelimelerini kullanıyorsa:
-         - "En yakın şubenin telefonu?", "En yakın şubeyi aramak istiyorum" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "", "bilgi_turu": "telefon" }} }}
-         - "En yakın şube saatleri?", "Kaça kadar açık?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "", "bilgi_turu": "saat" }} }}
-         - "En yakın şube nerede?", "Adresi ne?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "", "bilgi_turu": "adres" }} }}
-         (Eğer aynı cümlede adres de verdiyse 'kullanici_adresi'ne yaz, yoksa boş bırak).
+         - "En yakın şubenin telefonu?", "En yakın şubeyi aramak istiyorum" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "telefon" }} }}
+         - "En yakın şube saatleri?", "Kaça kadar açık?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "saat" }} }}
+         - "En yakın şube nerede?", "Adresi ne?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "adres" }} }}
+         (ÖNEMLİ: Eğer kullanıcı mesajında il/ilçe/mahalle belirttiyse 'kullanici_adresi'ne yaz, yoksa boş bırak).
        
-    # "EN YAKIN" İFADESİ GEÇMİYORSA
-       # ŞUBE ADRES/KONUM SORGUSU
-       - "Şubeniz nerede?", "Kadıköy şubesi adresi"
-       -> {{ "type": "action", "function": "sube_sorgula", "parameters": {{ "lokasyon": "..." }} }}
-       (Eğer şube adı yoksa "lokasyon": "" gönder)
-       
-       # ŞUBE ÇALIŞMA SAATİ/GÜN SORGUSU
-       - "Kaça kadar açıksınız?", "Pazar günü hizmet veriyor musunuz?", "Hafta sonu açık mısınız?", "Kadıköy şubesi pazar günü açık mı?"
-       -> {{ "type": "action", "function": "sube_saat_sorgula", "parameters": {{ "lokasyon": "..." }} }}
-       (Eğer belirli bir yer söylemediyse lokasyon boş string gönder, örn: "genel" veya "").
-       
-       # ŞUBE TELEFONU 
-       - "Telefon numaranız ne?", "Kadıköy şubesini nasıl ararım?", "İletişim numarası"
-       -> {{ "type": "action", "function": "sube_telefon_sorgula", "parameters": {{ "lokasyon": "..." }} }}
-       (Lokasyon yoksa boş string gönder).
-       
-       
-    1. Kullanıcı bu belirtilen durumlar haricinde ne sorarsa sorsun (Kargo, şikayet, adres), ÖNCE KİMLİK DOĞRULAMA akışını tamamla.
-    2. Sırayla eksik bilgileri iste (Ad -> Takip No -> Telefon).
-    3. Hepsi tamamsa -> {{ "type": "action", "function": "kimlik_dogrula", "parameters": {{ "ad": "...", "no": "...", "telefon": "..." }} }}
+       # NORMAL ŞUBE SORGULARI ("EN YAKIN" YOKSA):
+       - "Şubeniz nerede?", "Kadıköy şubesi adresi" -> {{ "type": "action", "function": "sube_sorgula", "parameters": {{ "lokasyon": "..." }} }}
+       - "Kaça kadar açıksınız?", "Pazar açık mı?" -> {{ "type": "action", "function": "sube_saat_sorgula", "parameters": {{ "lokasyon": "..." }} }}
+       - "Telefon numaranız ne?" -> {{ "type": "action", "function": "sube_telefon_sorgula", "parameters": {{ "lokasyon": "..." }} }}
 
-
+    2. --- İKİNCİ ÖNCELİK: KİMLİK DOĞRULAMA (KİŞİSEL İŞLEMLER İÇİN) ---
+       Eğer kullanıcı yukarıdaki genel sorular dışında bir şey soruyorsa (Kargo nerede, iptal, şikayet vb.):
+       - Kullanıcı parça parça bilgi veriyorsa (Önce isim, sonra numara gibi), GEÇMİŞ SOHBETTEKİ parçaları birleştir.
+       - Sırayla Ad, numara ve telefon sor.
+       - Ad, Numara ve Telefonun hepsi tamamsa -> 'kimlik_dogrula' çağır.
+       - Sadece eksik olanı iste. 
+       - Hata varsa eşleşmeyen veriyi belirt, örneğin kargo takip numarası hatalıysa müşteriye söylediği numaranın sistemdeki eşleşmediğini söyle ve yeniden numara belirtmesini iste.
+       - Ad, Numara ve Telefon elimizdeyse -> {{ "type": "action", "function": "kimlik_dogrula", "parameters": {{ "ad": "...", "no": "...", "telefon": "..." }} }}
+          
     --- SENARYO 2: KULLANICI DOĞRULANMIŞ İSE (GİRİŞ YAPILDI) ---
     Eğer 'DURUM: KULLANICI DOĞRULANDI' ise:
     1. Hafızadaki '{saved_no}' numarasını kullan.
 
     2. İŞLEMLER:
-       - "Kargom nerede?" -> {{ "type": "action", "function": "kargo_sorgula", "parameters": {{ "no": "{saved_no}" }} }}
+       # "Kargom nerede?" -> {{ "type": "action", "function": "kargo_sorgula", "parameters": {{ "no": "{saved_no}" }} }}
+       
+       # "Yanlış adrese gitti", "Kargom başka yere teslim edildi", "Ben oraya yollamadım" (YANLIŞ TESLİMAT):
+         -> {{ "type": "action", "function": "yanlis_teslimat_bildirimi", "parameters": {{ "no": "{saved_no}", "dogru_adres": "..." }} }}
+         (Eğer doğru adres belirtilmediyse "dogru_adres" boş bırakılsın).
 
        # İADE TALEBİ (DB KAYDI İÇİN SEBEP ZORUNLU)
        - "İade etmek istiyorum", "Geri göndereceğim":
@@ -626,12 +664,27 @@ def process_with_gemini(session_id, user_message):
                     user_sessions[session_id]['user_name'] = parts[2]
                     user_sessions[session_id]['role'] = parts[3]
                     user_sessions[session_id]['user_id'] = parts[4]
+                    user_sessions[session_id] = session_data
 
+                    pending_intent = session_data.get('pending_intent')
+                    if pending_intent:
+                        print(f"\n🚀 [DEBUG] BEKLEYEN NİYET OTOMATİK ÇALIŞTIRILIYOR: '{pending_intent}'\n")
+
+                        session_data['pending_intent'] = None
+                        user_sessions[session_id] = session_data
+
+                        return process_with_gemini(session_id, pending_intent)
                     rol_mesaji = "gönderici" if parts[3] == "gonderici" else "alıcı"
                     final_prompt = f"Kullanıcıya kimlik doğrulamanın başarılı olduğunu ve sistemde {rol_mesaji} olarak göründüğünü söyle. 'Nasıl yardımcı olabilirim?' diye sor."
                 else:
                     final_prompt = f"Kullanıcıya bilgilerin eşleşmediğini söyle ve tekrar denemesini iste. SADECE yanıt metni."
                 system_res = res
+
+            elif func == "yanlis_teslimat_bildirimi":
+                if not params.get("dogru_adres"):
+                    final_reply = "Anladım, bir karışıklık olmuş. Kargonun aslında hangi adrese teslim edilmesi gerekiyordu?"
+                else:
+                    system_res = yanlis_teslimat_bildirimi(params.get("no"), params.get("dogru_adres"), user_id)
             elif func == "sube_saat_sorgula":
                 system_res = sube_saat_sorgula(params.get("lokasyon"))
             elif func == "sube_sorgula":
@@ -669,10 +722,19 @@ def process_with_gemini(session_id, user_message):
         elif data.get("type") == "chat":
             final_reply = data.get("reply")
 
+        if not is_verified:
+            mevcut_niyet = session_data.get('pending_intent')
+            if not mevcut_niyet:
+                session_data['pending_intent'] = user_message
+                print(f"📥 [DEBUG] YENİ NİYET KAYDEDİLDİ: '{user_message}'")
+            else:
+                print(f"🔒 [DEBUG] MEVCUT NİYET KORUNUYOR: '{mevcut_niyet}'")
+
+            user_sessions[session_id] = session_data
+
         session_data['history'].append(f"KULLANICI: {user_message}")
         session_data['history'].append(f"ASİSTAN: {final_reply}")
         user_sessions[session_id] = session_data
-
         return final_reply
 
     except Exception as e:
@@ -707,7 +769,8 @@ def chat_api():
             'tracking_no': None,
             'role': None,
             'user_name': None,
-            'user_id': None
+            'user_id': None,
+            'pending_intent': None
         }
 
     resp = process_with_gemini(sid, msg)
