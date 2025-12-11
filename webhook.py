@@ -3,7 +3,7 @@ import os
 import sqlite3
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from gtts import gTTS
 from dotenv import load_dotenv
 
@@ -47,6 +47,65 @@ def metin_temizle(text):
     for k, v in mapping.items():
         text = text.replace(k, v)
     return text.strip()
+
+
+
+
+def vergi_hesapla_ai(urun_kategorisi, fiyat, hedef_ulke):
+    """Veritabanı olmadan Gemini ile gümrük vergisi hesaplar."""
+    if not genai: return "AI servisi kapalı."
+
+    try:
+
+        model = genai.GenerativeModel('gemini-2.5-flash')
+
+        prompt = f"""
+        GÖREV: Bir Gümrük Müşaviri gibi davran. Aşağıdaki gönderi için TAHMİNİ gümrük vergisi ve toplam maliyeti hesapla.
+
+        DETAYLAR:
+        - Ürün: {urun_kategorisi}
+        - Fiyat: {fiyat} Euro (Varsayılan para birimi Euro)
+        - Hedef Ülke: {hedef_ulke}
+
+        KURALLAR:
+        1. O ülkenin güncel KDV/Gümrük oranlarını (tahmini) baz al.
+        2. Muafiyet limiti altındaysa vergiyi 0 yaz.
+        3. ÇIKTI SADECE VE SADECE JSON FORMATINDA OLSUN.
+
+        JSON FORMATI:
+        {{
+            "vergi_orani": "%19",
+            "vergi_tutari": "190 Euro",
+            "toplam_tutar": "1190 Euro",
+            "aciklama": "Almanya için 150 Euro üzeri gönderilerde %19 ithalat vergisi uygulanır."
+        }}
+        """
+
+        response = model.generate_content(prompt)
+        text_res = response.text.strip().replace("```json", "").replace("```", "")
+        data = json.loads(text_res)
+
+        return f"""HESAPLAMA SONUCU ({hedef_ulke}):
+        Ürün: {urun_kategorisi} | Vergi Oranı: {data['vergi_orani']} | Vergi Tutarı: {data['vergi_tutari']}
+        TOPLAM MALİYET: {data['toplam_tutar']}
+        Bilgi: {data['aciklama']}"""
+
+    except Exception as e:
+        print(f"Vergi AI Hatası: {e}")
+        return "Şu an gümrük veritabanına erişilemiyor."
+
+
+def kampanya_sorgula():
+    conn = get_db_connection()
+    try:
+        rows = conn.execute("SELECT baslik, detay FROM kampanyalar WHERE aktif_mi = 1").fetchall()
+        if not rows: return "Aktif kampanya yok."
+        # Sadece yan yana yazıyoruz, AI seçecek
+        return " | ".join([f"{r['baslik']}: {r['detay']}" for r in rows])
+    finally: conn.close()
+
+
+# --- DB İŞLEMLERİ ---
 
 def kimlik_dogrula(siparis_no, ad, telefon):
     print(f"\n--- DOĞRULAMA DEBUG ---")
@@ -103,6 +162,120 @@ def kimlik_dogrula(siparis_no, ad, telefon):
         conn.close()
 
 
+def mesafe_hesapla_ai(cikis, varis):
+    if not cikis or not varis: return 0
+
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+
+        prompt = f"""
+        GÖREV: Aşağıdaki iki lokasyon arasındaki tahmini karayolu sürüş mesafesini kilometre (km) cinsinden ver.
+
+        Kalkış: {cikis}
+        Varış: {varis}
+
+        KURALLAR:
+        1. Sadece sayıyı ver. (Örn: 350.5)
+        2. "km", "kilometre" veya açıklama yazma. SADECE SAYI.
+        """
+        response = model.generate_content(prompt)
+        text_mesafe = response.text.strip()
+
+        import re
+        sayi = re.search(r"\d+(\.\d+)?", text_mesafe)
+        if sayi:
+            return float(sayi.group())
+        else:
+            return 0
+
+    except Exception as e:
+        print(f"Mesafe hesaplama hatası: {e}")
+        return 0
+
+
+def ucret_hesapla(cikis, varis, desi):
+    if not cikis or not varis or not desi:
+        return "Fiyat hesaplayabilmem için 'Nereden', 'Nereye' ve 'Desi' bilgisini söylemelisiniz."
+
+    try:
+        desi = float(str(desi).replace("desi", "").strip())
+    except:
+        return "Lütfen desi bilgisini sayısal olarak belirtin."
+
+    mesafe_km = mesafe_hesapla_ai(cikis, varis)
+
+    if mesafe_km == 0:
+        return f"Üzgünüm, {cikis} ile {varis} arasındaki mesafeyi hesaplayamadım."
+
+    conn = get_db_connection()
+    try:
+        tarife = conn.execute("SELECT * FROM ucretlendirme_tarife WHERE id=1").fetchone()
+
+        if not tarife: return "Veritabanında tarife bilgisi bulunamadı."
+        sinir_km = tarife['mesafe_siniri_km']
+
+        if mesafe_km > sinir_km:
+            km_birim_ucret = tarife['uzak_mesafe_km_ucret']
+            ek_desi_ucret = tarife['uzak_mesafe_ek_desi_ucret']
+        else:
+            km_birim_ucret = tarife['kisa_mesafe_km_ucret']
+            ek_desi_ucret = tarife['kisa_mesafe_ek_desi_ucret']
+
+        yol_ucreti = mesafe_km * km_birim_ucret
+
+        taban_limit = tarife['taban_desi_limiti']
+        taban_fiyat = tarife['taban_desi_ucreti']
+
+        if desi <= taban_limit:
+            paket_ucreti = taban_fiyat
+        else:
+            fark_desi = desi - taban_limit
+            paket_ucreti = taban_fiyat + (fark_desi * ek_desi_ucret)
+
+        toplam_fiyat = yol_ucreti + paket_ucreti
+
+        return float(toplam_fiyat)
+
+    except Exception as e:
+        return f"Hesaplama sırasında bir hata oluştu: {e}"
+    finally:
+        conn.close()
+
+
+def kargo_ucret_itiraz(siparis_no, fatura_no, musteri_id):
+    if not siparis_no or not fatura_no:
+        return "Sipariş No ve Fatura No gereklidir."
+
+    conn = get_db_connection()
+    try:
+        fatura_id_temiz = str(fatura_no).replace("#", "").strip()
+        fatura = conn.execute("SELECT * FROM musteri_faturalar WHERE fatura_id = ? AND siparis_no = ?",
+                              (fatura_id_temiz, siparis_no)).fetchone()
+
+        if not fatura: return "Fatura bulunamadı."
+
+        kayitli_fiyat = float(fatura['toplam_fiyat'])
+
+        hesaplanan_fiyat = ucret_hesapla(fatura['cikis_adresi'], fatura['varis_adresi'], fatura['desi'])
+
+        if isinstance(hesaplanan_fiyat, str):
+            return f"Kontrol yapılamadı: {hesaplanan_fiyat}"
+
+        fark = kayitli_fiyat - hesaplanan_fiyat
+
+        if abs(fark) < 0.5:
+            return f"İnceleme tamamlandı. Olması gereken tutar {hesaplanan_fiyat:.2f} TL. Faturanız DOĞRUDUR."
+        elif fark > 0:
+            return f"HATA TESPİT EDİLDİ! Olması gereken: {hesaplanan_fiyat:.2f} TL. Size yansıyan: {kayitli_fiyat:.2f} TL. {fark:.2f} TL iade başlatıldı."
+        else:
+            return f"İnceleme tamamlandı. Normal tutar {hesaplanan_fiyat:.2f} TL iken size {kayitli_fiyat:.2f} TL yansımış. Ek ücret talep edilmeyecektir."
+
+    except Exception as e:
+        return f"Hata: {e}"
+    finally:
+        conn.close()
+
+
 def sikayet_olustur(no, konu, musteri_id):
     if not no or not konu: return "Şikayet konusu eksik."
     safe_id = musteri_id if musteri_id else 0
@@ -151,6 +324,7 @@ def kargo_bilgisi_getir(no):
     finally:
         conn.close()
 
+
 def tahmini_teslimat_saati_getir(no):
     if not no: return "Numara bulunamadı."
     conn = get_db_connection()
@@ -192,6 +366,7 @@ def hasar_kaydi_olustur(no, hasar_tipi, musteri_id):
     finally:
         conn.close()
 
+
 def iade_islemi_baslat(no, sebep, musteri_id, user_role):
     if not no: return "Numara bulunamadı."
 
@@ -200,7 +375,6 @@ def iade_islemi_baslat(no, sebep, musteri_id, user_role):
 
     if not sebep: sebep = "Belirtilmedi"
     safe_id = musteri_id if musteri_id else 0
-
     conn = get_db_connection()
     try:
         query = "SELECT durum_adi FROM kargo_takip JOIN hareket_cesitleri ON durum_id = id WHERE takip_no = ? OR siparis_no = ?"
@@ -262,6 +436,61 @@ def kargo_iptal_et(no):
     finally:
         conn.close()
 
+# [Bu kısım, kodun ortasında, diğer DB fonksiyonlarının altına eklenir]
+
+# 7. KARGO TAKİP NUMARASI HATASI FONKSİYONU
+def takip_numarasi_hatasi(musteri_id=None):
+    import random
+    yeni_no = str(random.randint(100000, 999999))
+    conn = get_db_connection()
+    try:
+        bugun = datetime.now().strftime('%Y-%m-%d')
+        real_user_id = musteri_id if musteri_id else 9999
+        mock_alici_id = 1002
+
+        conn.execute("INSERT INTO siparisler (siparis_no, gonderici_id, alici_id, urun_tanimi) VALUES (?, ?, ?, ?)", (yeni_no, real_user_id, mock_alici_id, "Hatalı Numara Yenileme"))
+        conn.execute("INSERT INTO kargo_takip (takip_no, siparis_no, durum_id, tahmini_teslim, teslim_adresi) VALUES (?, ?, ?, ?, ?)", (yeni_no, yeni_no, 1, bugun, "Yenileme Adresi"))
+        conn.commit()
+        return f"YENİ_NO_OLUŞTU|{yeni_no}"
+    except Exception as e:
+        print(f"HATA: {e}")
+        return "HATA|Yeni numara oluşturulamadı."
+    finally: conn.close()
+
+# 9. KURYE GELMEDİ ŞİKAYETİ
+def kurye_gelmedi_sikayeti():
+    return "Kuryenin size gelmemesiyle ilgili şikayetiniz alınmıştır. En yakın zamanda yeni bir teslimat/alım saati için sizi arayacağız."
+
+# 31. ÖVGÜ
+def hizli_teslimat_ovgu():
+    return "Hizmetimizden memnun kalmanıza çok sevindik! Güzel geri bildiriminiz için teşekkür ederiz. İyi günler dileriz."
+
+# 37. SMS/E-POSTA BİLDİRİMİ İSTEĞİ - DÜZELTİLDİ
+def bildirim_ayari_degistir(tip, musteri_id):
+    if not tip: return "SMS mi E-posta mı istiyorsunuz?"
+    if not musteri_id: return "Önce giriş yapmalısınız."
+
+    tip_normalized = tip.lower().replace("e-posta", "e-posta").replace("e posta", "e-posta")
+    if "sms" in tip_normalized:
+        final_tip = "SMS"
+    elif "e-posta" in tip_normalized or "eposta" in tip_normalized:
+        final_tip = "E-posta"
+    else:
+        return "Bildirim ayarlarınızı (SMS veya E-posta) ne olarak değiştirmek istediğinizi belirtir misiniz?"
+
+    conn = get_db_connection()
+    try:
+        conn.execute("UPDATE musteriler SET bildirim_tercihi = ? WHERE musteri_id = ?", (final_tip, musteri_id))
+        conn.commit()
+        return f"Bildirim tercihiniz '{final_tip}' olarak güncellendi."
+    except Exception as e: return f"Hata: {e}"
+    finally: conn.close()
+
+# 38. KİMLİK DOĞRULAMA SORUNU
+def kimlik_dogrulama_sorunu(): return "Kimlik doğrulama sorunları genellikle yanlış bilgi girişinden kaynaklanır. Lütfen bilgilerinizi kontrol ederek tekrar deneyin. Sorun devam ederse sizi temsilciye aktarabiliriz."
+
+# 39. YURT DIŞI KARGO KOŞULLARI
+def yurt_disi_kargo_kosul(): return "Yurt dışı gönderileri için fiyatlandırma ülkeye göre değişir. Süreler ve gümrük işlemleriyle ilgili detaylı bilgi ve gerekli belge listesi size SMS ile gönderilmiştir."
 
 def adres_degistir(no, yeni_adres):
     if not no: return "Takip numarası bulunamadı."
@@ -276,6 +505,7 @@ def adres_degistir(no, yeni_adres):
     finally:
         conn.close()
 
+
 def alici_adresi_degistir(no, yeni_adres):
     if not no: return "Takip numarası bulunamadı."
     if not yeni_adres: return "Adres bilgisi eksik. Lütfen yeni adresi söyleyin."
@@ -288,11 +518,6 @@ def alici_adresi_degistir(no, yeni_adres):
         return f"Hata: {e}"
     finally:
         conn.close()
-
-
-def alici_adi_degistir(no, yeni_isim):
-    return f"Kargonuzun alıcı adı '{yeni_isim}' olarak güncellenmiştir. Kurye bilgilendirildi."
-
 
 def yanlis_teslimat_bildirimi(no, dogru_adres, musteri_id):
 
@@ -325,6 +550,175 @@ def yanlis_teslimat_bildirimi(no, dogru_adres, musteri_id):
 
     except Exception as e:
         return f"Hata: {e}"
+    finally:
+        conn.close()
+
+
+def kargo_durum_destek(takip_no, musteri_id):
+    if not takip_no: return "İşlem yapabilmem için takip numarası gerekli."
+
+    conn = get_db_connection()
+    try:
+        query = """
+            SELECT 
+                h.islem_tarihi, 
+                h.islem_yeri, 
+                h.aciklama,
+                s.sube_adi as hedef_sube,
+                s.telefon as hedef_tel
+            FROM kargo_hareketleri h
+            LEFT JOIN subeler s ON h.hedef_sube_id = s.sube_id
+            WHERE h.takip_no = ? 
+            ORDER BY h.islem_tarihi DESC 
+            LIMIT 1
+        """
+        row = conn.execute(query, (takip_no,)).fetchall()
+
+        if not row:
+            return "Bu kargo için henüz sisteme girilmiş bir hareket yok."
+
+        kayit = row[0]
+
+        son_yer = kayit['islem_yeri']
+        durum = kayit['aciklama']
+        tarih = kayit['islem_tarihi']
+        hedef_sube = kayit['hedef_sube']
+        hedef_tel = kayit['hedef_tel']
+
+        cevap = (f"Kargo Durumu:Kargonuz en son {tarih} tarihinde {son_yer} konumunda işlem görmüştür.\n"
+                 f"Son İşlem: {durum}\n\n")
+
+        if hedef_tel:
+            cevap += (f"Kargonuzun teslim edileceği birim {hedef_sube}'dir.\n"
+                      f"Gecikme veya detaylı bilgi için doğrudan varış şubemizi arayabilirsiniz:\n"
+                      f"{hedef_sube} Telefonu:{hedef_tel}")
+        else:
+            cevap += "Hedef şube iletişim bilgisine şu an ulaşılamıyor."
+
+        return cevap
+
+    except Exception as e:
+        return f"Hata: {e}"
+    finally:
+        conn.close()
+
+def fatura_bilgisi_gonderici(siparis_no, musteri_id):
+    if not siparis_no or not musteri_id:
+        return "Fatura bilgisi için sipariş numarası ve kullanıcı doğrulaması gereklidir."
+
+    conn = get_db_connection()
+    try:
+        query = """
+            SELECT * FROM musteri_faturalar 
+            WHERE siparis_no = ? AND musteri_id = ?
+        """
+        fatura = conn.execute(query, (siparis_no, musteri_id)).fetchone()
+
+        if not fatura:
+            return "Bu siparişe ait sizin adınıza kesilmiş bir fatura bulunamadı. (Sadece gönderici fatura detayını görebilir)."
+
+        tarih = fatura['hesaplama_tarihi']
+        tutar = fatura['toplam_fiyat']
+        mesafe = fatura['mesafe_km']
+        desi = fatura['desi']
+        cikis = fatura['cikis_adresi']
+        varis = fatura['varis_adresi']
+
+        return (f"Fatura Detayı:\n"
+                f"- Tarih: {tarih}\n"
+                f"- Güzergah: {cikis} -> {varis} ({mesafe} km)\n"
+                f"- Paket: {desi} Desi\n"
+                f"- Toplam Tutar: {tutar} TL\n"
+                f"Faturanız sistemimizde kayıtlıdır.")
+
+    except Exception as e:
+        return f"Fatura sorgulama hatası: {e}"
+    finally:
+        conn.close()
+
+def evde_olmama_bildirimi(takip_no):
+    if not takip_no:
+        return "İşlem yapabilmem için kargo takip numarasını belirtmelisiniz."
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT durum_id, tahmini_teslim FROM kargo_takip WHERE takip_no = ?", (takip_no,))
+    kargo = cursor.fetchone()
+
+    if not kargo:
+        conn.close()
+        return f"{takip_no} numaralı bir kargo bulunamadı."
+
+    durum_id = kargo[0]
+    eski_tarih = kargo[1]
+
+    if durum_id == 4:
+        conn.close()
+        return f"{takip_no} numaralı kargo zaten TESLİM EDİLMİŞ, tarih değişikliği yapılamaz."
+
+    bugun = datetime.now()
+    yeni_tarih_obj = bugun + timedelta(days=2)
+    yeni_tarih_str = yeni_tarih_obj.strftime('%Y-%m-%d')
+
+    try:
+        cursor.execute('''
+            UPDATE kargo_takip 
+            SET tahmini_teslim = ? 
+            WHERE takip_no = ?
+        ''', (yeni_tarih_str, takip_no))
+        conn.commit()
+        mesaj = (f"{takip_no} numaralı kargonuz için 'Evde Yokum' bildirimi alındı.\n"
+                 f"Eski Tarih: {eski_tarih} -> Yeni Teslim Tarihi: {yeni_tarih_str} olarak güncellenmiştir.\n"
+                 f"En yakın şubeden de teslim alabilirsiniz.")
+    except Exception as e:
+        mesaj = f"Bir hata oluştu: {e}"
+    finally:
+        conn.close()
+
+    return mesaj
+
+
+def supervizor_talebi(ad, telefon):
+    if not ad or not telefon:
+        return "Yetkilimizin size ulaşabilmesi için lütfen Ad-Soyad ve Telefon numaranızı belirtin."
+
+    conn = get_db_connection()
+    try:
+        tel_temiz = telefon.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").strip()
+        if len(tel_temiz) > 10 and tel_temiz.startswith('0'):
+            tel_temiz = tel_temiz[1:]
+
+        musteri_id = 0
+
+        row = conn.execute("SELECT musteri_id, ad_soyad FROM musteriler WHERE telefon = ?", (tel_temiz,)).fetchone()
+
+        if row:
+            db_ad = metin_temizle(row['ad_soyad'])
+            girilen_ad = metin_temizle(ad)
+
+            if girilen_ad in db_ad or db_ad in girilen_ad:
+                musteri_id = row['musteri_id']
+                print(f"DEBUG: Müşteri bulundu ID: {musteri_id}")
+
+        su_an = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO supervisor_gorusmeleri (musteri_id, girilen_ad, girilen_telefon, talep_tarihi) 
+            VALUES (?, ?, ?, ?)
+        ''', (musteri_id, ad, tel_temiz, su_an))
+
+        conn.commit()
+        talep_no = cursor.lastrowid
+
+        return (f"Teşekkürler {ad}. Talebiniz alınmıştır (Talep No: #{talep_no}). "
+                f"Supervisor ekibimiz {tel_temiz} numarasından en kısa sürede size dönüş yapacaktır.")
+
+    except Exception as e:
+        print(f"Supervisor Hatası: {e}")
+        return "Sistemsel bir hata oluştu, lütfen daha sonra tekrar deneyin."
+
     finally:
         conn.close()
 
@@ -505,20 +899,13 @@ def sube_telefon_sorgula(lokasyon):
     finally:
         conn.close()
 
+
 # --- GEMINI ZEKASI ---
 def process_with_gemini(session_id, user_message):
     if not genai: return "AI kapalı."
 
     model = genai.GenerativeModel('gemini-2.5-flash')
 
-    default_session = {
-        'history': [],
-        'verified': False,
-        'tracking_no': None,
-        'user_name': None,
-        'role': None,
-        'user_id': None
-    }
 
     default_session = {'history': [], 'verified': False, 'tracking_no': None, 'user_name': None, 'role': None,
                        'user_id': None, 'pending_intent': None}
@@ -526,6 +913,7 @@ def process_with_gemini(session_id, user_message):
     for k, v in default_session.items():
         if k not in session_data: session_data[k] = v
 
+    # Değişkenleri Çek
     history = session_data['history'][-10:]
     is_verified = session_data['verified']
     saved_no = session_data['tracking_no']
@@ -549,94 +937,150 @@ def process_with_gemini(session_id, user_message):
     system_prompt = f"""
     GÖREV: Hızlı Kargo sesli asistanısın. {status_prompt}
 
-    ÖN İŞLEM: Tek tek söylenen sayıları birleştir (bir iki üç -> 123).
-    ÇIKTI: Sadece JSON.
+ÖN İŞLEM: Tek tek söylenen sayıları birleştir (bir iki üç -> 123).
+ÇIKTI: SADECE JSON.
 
     ANALİZ KURALLARI VE ÖNCELİKLERİ:
 
-    --- SENARYO 1: KULLANICI DOĞRULANMAMIŞ İSE (MİSAFİR) ---
-    Eğer 'DURUM: MİSAFİR KULLANICI' ise:
+    --- SENARYO 1: GENEL SORGULAR (MİSAFİR DE YAPABİLİR) ---
 
-    1. --- EN YÜKSEK ÖNCELİK: GENEL SORGULAR (KİMLİK GEREKMEZ) ---
-       
-       # "EN YAKIN" İFADESİ GEÇİYORSA (KRİTİK):
-       - Kullanıcı "en yakın", "bana yakın" kelimelerini kullanıyorsa:
-         - "En yakın şubenin telefonu?", "En yakın şubeyi aramak istiyorum" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "telefon" }} }}
-         - "En yakın şube saatleri?", "Kaça kadar açık?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "saat" }} }}
-         - "En yakın şube nerede?", "Adresi ne?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "adres" }} }}
-         (ÖNEMLİ: Eğer kullanıcı mesajında il/ilçe/mahalle belirttiyse 'kullanici_adresi'ne yaz, yoksa boş bırak).
-       
-       # NORMAL ŞUBE SORGULARI ("EN YAKIN" YOKSA):
-       - "Şubeniz nerede?", "Kadıköy şubesi adresi" -> {{ "type": "action", "function": "sube_sorgula", "parameters": {{ "lokasyon": "..." }} }}
-       - "Kaça kadar açıksınız?", "Pazar açık mı?" -> {{ "type": "action", "function": "sube_saat_sorgula", "parameters": {{ "lokasyon": "..." }} }}
-       - "Telefon numaranız ne?" -> {{ "type": "action", "function": "sube_telefon_sorgula", "parameters": {{ "lokasyon": "..." }} }}
-
-    2. --- İKİNCİ ÖNCELİK: KİMLİK DOĞRULAMA (KİŞİSEL İŞLEMLER İÇİN) ---
-       Eğer kullanıcı yukarıdaki genel sorular dışında bir şey soruyorsa (Kargo nerede, iptal, şikayet vb.):
-       - Kullanıcı parça parça bilgi veriyorsa (Önce isim, sonra numara gibi), GEÇMİŞ SOHBETTEKİ parçaları birleştir.
-       - Sırayla Ad, numara ve telefon sor.
-       - Ad, Numara ve Telefonun hepsi tamamsa -> 'kimlik_dogrula' çağır.
-       - Sadece eksik olanı iste. 
-       - Hata varsa eşleşmeyen veriyi belirt, örneğin kargo takip numarası hatalıysa müşteriye söylediği numaranın sistemdeki eşleşmediğini söyle ve yeniden numara belirtmesini iste.
-       - Ad, Numara ve Telefon elimizdeyse -> {{ "type": "action", "function": "kimlik_dogrula", "parameters": {{ "ad": "...", "no": "...", "telefon": "..." }} }}
-          
-    --- SENARYO 2: KULLANICI DOĞRULANMIŞ İSE (GİRİŞ YAPILDI) ---
-    Eğer 'DURUM: KULLANICI DOĞRULANDI' ise:
-    1. Hafızadaki '{saved_no}' numarasını kullan.
-
-    2. İŞLEMLER:
-       # "Kargom nerede?" -> {{ "type": "action", "function": "kargo_sorgula", "parameters": {{ "no": "{saved_no}" }} }}
-       
-       # "Yanlış adrese gitti", "Kargom başka yere teslim edildi", "Ben oraya yollamadım" (YANLIŞ TESLİMAT):
-         -> {{ "type": "action", "function": "yanlis_teslimat_bildirimi", "parameters": {{ "no": "{saved_no}", "dogru_adres": "..." }} }}
-         (Eğer doğru adres belirtilmediyse "dogru_adres" boş bırakılsın).
-
-       # İADE TALEBİ (DB KAYDI İÇİN SEBEP ZORUNLU)
-       - "İade etmek istiyorum", "Geri göndereceğim":
-         - EĞER sebep belliyse -> {{ "type": "action", "function": "iade_islemi_baslat", "parameters": {{ "no": "{saved_no}", "sebep": "..." }} }}
-         - EĞER sebep yoksa -> {{ "type": "chat", "reply": "İade işlemini başlatmak için lütfen iade sebebinizi kısaca belirtir misiniz?" }}
-       
-       # İPTAL TALEBİ (YENİ)
-       - "Kargoyu iptal et", "Vazgeçtim göndermeyeceğim", "İptal etmek istiyorum":
-         -> {{ "type": "action", "function": "kargo_iptal_et", "parameters": {{ "no": "{saved_no}" }} }}
-         
-       # TESLİMAT SAATİ (YENİ EKLENDİ)
-       - "Ne zaman gelir?", "Saat kaçta teslim olur?", "Hangi gün gelir?":
-         -> {{ "type": "action", "function": "tahmini_teslimat", "parameters": {{ "no": "{saved_no}" }} }}
-         
-       # ŞİKAYET İŞLEMLERİ
-       - "Şikayetim var", "Paket hasarlı", "Kurye kaba", "Geç geldi":
-         - Konu belli değilse -> {{ "type": "chat", "reply": "Anlıyorum, yaşadığınız sorun nedir? Lütfen şikayetinizi kısaca belirtin." }}
-         - Konu belliyse -> {{ "type": "action", "function": "sikayet_olustur", "parameters": {{ "no": "{saved_no}", "konu": "..." }} }}
-
-       # HASAR BİLDİRİMİ (YENİ - TAZMİNAT)
-       - "Kargom kırık geldi", "Paket ezilmiş", "Ürün hasarlı", "Islanmış", "Parçalanmış":
-         - EĞER hasar tipi belliyse -> {{ "type": "action", "function": "hasar_kaydi_olustur", "parameters": {{ "no": "{saved_no}", "hasar_tipi": "..." }} }}
-         - EĞER tip belli değilse -> {{ "type": "chat", "reply": "Çok üzgünüz. Hasarın türü nedir? (Kırık, Ezik, Islak, Kayıp)" }}
-         
-       # ALICI ADI DEĞİŞTİRME
-       - "Alıcı adını değiştirmek istiyorum", "Alıcının adını yanlış girmişim" (Yeni isim yoksa):
-         -> {{ "type": "chat", "reply": "Tabii, kargoyu teslim alacak yeni kişinin Adı ve Soyadı nedir?" }}
-       - Yeni isim belliyse:
-         -> {{ "type": "action", "function": "alici_adi_degistir", "parameters": {{ "no": "{saved_no}", "yeni_isim": "..." }} }}
-
-       # KENDİ ADRESİNİ DEĞİŞTİRME (Gelen Kargo)
-       - "Adresimi değiştirmek istiyorum", "Kapı numarasını yanlış yazmışım", "Sadece sokağı düzelt", "İlçe yanlış olmuş":
-         - EĞER kullanıcı TAM YENİ ADRESİ (Mahalle, sokak, no, ilçe/il) söylediyse:
-           -> {{ "type": "action", "function": "adres_degistir", "parameters": {{ "no": "{saved_no}", "yeni_adres": "..." }} }}
-         - EĞER kullanıcı SADECE DÜZELTME istediyse ("Kapı nosunu 5 yap", "Sadece sokağı değiştir", "Daire no eksik"):
-           -> {{ "type": "chat", "reply": "Adresinizin eksiksiz olması için lütfen güncel ve TAM adresinizi (Mahalle, Sokak, No, İlçe) söyler misiniz?" }}
-
-       # ALICI ADRESİNİ DEĞİŞTİRME (Giden Kargo)
-       - "Gönderdiğim kargonun adresi yanlış", "Alıcı adresini değiştirmek istiyorum", "Sokak ismi hatalı girilmiş", "Alıcının kapı nosu yanlış":
-         - EĞER kullanıcı TAM YENİ ADRESİ söylediyse:
-           -> {{ "type": "action", "function": "alici_adresi_degistir", "parameters": {{ "no": "{saved_no}", "yeni_adres": "..." }} }}
-         - EĞER kullanıcı SADECE DÜZELTME istediyse ("Sadece apartman adını düzelt", "Sokak yanlış", "Daire no hatalı"):
-           -> {{ "type": "chat", "reply": "Karışıklık olmaması için lütfen alıcının güncel ve TAM adresini (Mahalle, Sokak, No, İlçe) söyler misiniz?" }}
+1. --- EN YÜKSEK ÖNCELİK: GENEL SORGULAR (KİMLİK GEREKMEZ) ---
+    # FİYAT SORGULAMA (YENİ)
+   - "İstanbul'dan Ankara'ya kargo ne kadar?", "Fiyat hesapla"
+     -> {{ "type": "action", "function": "ucret_hesapla", "parameters": {{ "cikis": "...", "varis": "...", "desi": "..." }} }}
+     (Eğer eksik bilgi varsa sor).
     
-    4. GENEL SOHBET:
-       - Merhaba, nasılsın vb. -> {{ "type": "chat", "reply": "..." }}
-    """
+    # "EN YAKIN" İFADESİ GEÇİYORSA (KRİTİK):
+   - Kullanıcı "en yakın", "bana yakın" kelimelerini kullanıyorsa:
+     - "En yakın şubenin telefonu?", "En yakın şubeyi aramak istiyorum" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "telefon" }} }}
+     - "En yakın şube saatleri?", "Kaça kadar açık?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "saat" }} }}
+     - "En yakın şube nerede?", "Adresi ne?" -> {{ "type": "action", "function": "en_yakin_sube_bul", "parameters": {{ "kullanici_adresi": "...", "bilgi_turu": "adres" }} }}
+     (ÖNEMLİ: Eğer kullanıcı mesajında il/ilçe/mahalle belirttiyse 'kullanici_adresi'ne yaz, yoksa boş bırak).
+    
+    # NORMAL ŞUBE SORGULARI ("EN YAKIN" YOKSA):
+   - "Şubeniz nerede?", "Kadıköy şubesi adresi" -> {{ "type": "action", "function": "sube_sorgula", "parameters": {{ "lokasyon": "..." }} }}
+   - "Kaça kadar açıksınız?", "Pazar açık mı?" -> {{ "type": "action", "function": "sube_saat_sorgula", "parameters": {{ "lokasyon": "..." }} }}
+   - "Telefon numaranız ne?" -> {{ "type": "action", "function": "sube_telefon_sorgula", "parameters": {{ "lokasyon": "..." }} }}
+
+   # SÜPERVİZÖR / CANLI DESTEK (ÖZEL İSTİSNA - SADECE AD VE TELEFON YETERLİ)
+   - "Yetkiliyle görüşmek istiyorum", "Süpervizör", "İnsana bağla", "Müşteri temsilcisi":
+     - Bu işlem için TAKİP NUMARASI GEREKMEZ.
+     - Sırasıyla SADECE Ad Soyad ve Telefon iste. Önce ad -> sonra telefon.
+     - Bilgiler (Geçmiş sohbet dahil) tamamsa -> {{ "type": "action", "function": "supervizor_talebi", "parameters": {{ "ad": "...", "telefon": "..." }} }}
+     - Eksikse sadece Ad veya Telefon iste
+    
+2. --- İKİNCİ ÖNCELİK: KİMLİK DOĞRULAMA (KİŞİSEL İŞLEMLER İÇİN) ---
+    Eğer kullanıcı yukarıdaki genel sorular dışında bir şey soruyorsa (Kargo nerede, iptal, şikayet vb.) veya süpervizörle görüşme talebi belirtmiyorsa:
+    - Kullanıcı parça parça bilgi veriyorsa (Önce isim, sonra numara gibi), GEÇMİŞ SOHBETTEKİ parçaları birleştir.
+    - Sırayla Ad, numara ve telefon sor.
+    - Ad, Numara ve Telefonun hepsi tamamsa -> 'kimlik_dogrula' çağır.
+    - Sadece eksik olanı iste. 
+    - Hata varsa eşleşmeyen veriyi belirt, örneğin kargo takip numarası hatalıysa müşteriye söylediği numaranın sistemdeki numarayla eşleşmediğini söyle ve yeniden numara belirtmesini iste.
+    - Ad, Numara ve Telefon elimizdeyse -> {{ "type": "action", "function": "kimlik_dogrula", "parameters": {{ "ad": "...", "no": "...", "telefon": "..." }} }}
+     
+--- SENARYO 2: KULLANICI DOĞRULANMIŞ İSE (GİRİŞ YAPILDI) ---
+Eğer 'DURUM: KULLANICI DOĞRULANDI' ise:
+1. Hafızadaki '{{saved_no}}' numarasını kullan.
+
+2. İŞLEMLER:
+    # "Kargom nerede?" -> {{ "type": "action", "function": "kargo_sorgula", "parameters": {{ "no": "{saved_no}" }} }}
+    
+    # "Yanlış adrese gitti", "Kargom başka yere teslim edildi", "Ben oraya yollamadım" (YANLIŞ TESLİMAT):
+      -> {{ "type": "action", "function": "yanlis_teslimat_bildirimi", "parameters": {{ "no": "{saved_no}", "dogru_adres": "..." }} }}
+      (Eğer doğru adres belirtilmediyse "dogru_adres" boş bırakılsın).
+
+    # İADE TALEBİ (DB KAYDI İÇİN SEBEP ZORUNLU)
+    - "İade etmek istiyorum", "Geri göndereceğim":
+      - EĞER sebep belliyse -> {{ "type": "action", "function": "iade_islemi_baslat", "parameters": {{ "no": "{saved_no}", "sebep": "..." }} }}
+      - EĞER sebep yoksa -> {{ "type": "chat", "reply": "İade işlemini başlatmak için lütfen iade sebebinizi kısaca belirtir misiniz?" }}
+    
+    # İPTAL TALEBİ (YENİ)
+    - "Kargoyu iptal et", "Vazgeçtim göndermeyeceğim", "İptal etmek istiyorum":
+      -> {{ "type": "action", "function": "kargo_iptal_et", "parameters": {{ "no": "{saved_no}" }} }}
+    
+    # TESLİMAT SAATİ (YENİ EKLENDİ)
+    - "Ne zaman gelir?", "Saat kaçta teslim olur?", "Hangi gün gelir?":
+      -> {{ "type": "action", "function": "tahmini_teslimat", "parameters": {{ "no": "{saved_no}" }} }}
+    
+    # KARGONUN GECİKMESİ ŞİKAYETİ (4. NİYET)
+    - "Kargom gecikti", "teslimat süresi aşıldı", "çok yordu" -> {{ "type": "action", "function": "gecikme_sikayeti", "parameters": {{ "no": "{saved_no}", "musteri_id": "{{user_id}}" }} }}
+    
+    # KARGO TAKİP NUMARASI HATASI (7. NİYET)
+    - Kullanıcı **"takip numarası hatalı", "geçersiz numara", "kod yanlış", "sistem görmüyor"** veya **"numara bulunamadı"** gibi sorunlardan bahsediyorsa:
+      -> {{ "type": "action", "function": "takip_numarasi_hatasi", "parameters": {{}} }}
+      
+    # KURYE GELMEMESİ ŞİKAYETİ (9. NİYET)
+    - "Kurye gelmedi", "alım saati geçti" -> {{ "type": "action", "function": "kurye_gelmedi_sikayeti", "parameters": {{}} }}
+
+    # ÖVGÜ (31. NİYET)
+    - "Teşekkürler", "Hızlı geldi", "Memnun kaldım" -> {{ "type": "action", "function": "hizli_teslimat_ovgu", "parameters": {{}} }}
+
+    # BİLDİRİM AYARI DEĞİŞTİR (37. NİYET)
+    - "Bildirim ayarını değiştir", "SMS istemiyorum", "E-posta gelsin" -> {{ "type": "action", "function": "bildirim_ayari_degistir", "parameters": {{ "tip": "...", "musteri_id": "{{user_id}}" }} }}
+    
+    # KİMLİK DOĞRULAMA SORUNU (38. NİYET)
+    - Kullanıcı **kimlik doğrulama yapamıyorum, hata alıyorum, bilgilerim yanlış** gibi sorunlardan bahsediyorsa:
+      -> {{ "type": "action", "function": "kimlik_dogrulama_sorunu", "parameters": {{}} }}
+      
+    # YURT DIŞI KARGO KOŞULLARI (39. NİYET)
+    - "Yurt dışı kargo", "gümrük", "ülke koşulları" -> {{ "type": "action", "function": "yurt_disi_kargo_kosul", "parameters": {{}} }}
+    
+    # GENEL MÜŞTERİ ŞİKAYETİ (Kurye Kaba, Yanlış Faturalandırma vb.)
+    - "Şikayetim var", "Kurye kaba davrandı", "Yanlış fatura geldi":
+      - Konu belli değilse -> {{ "type": "chat", "reply": "Anlıyorum, yaşadığınız sorun nedir? Lütfen şikayetinizi kısaca belirtin." }}
+      - Konu belliyse -> {{ "type": "action", "function": "sikayet_olustur", "parameters": {{ "no": "{{saved_no}}", "konu": "..." }} }}
+
+    # HASAR BİLDİRİMİ (YENİ - TAZMİNAT)
+    - "Kargom kırık geldi", "Paket ezilmiş", "Ürün hasarlı", "Islanmış", "Parçalanmış":
+      - EĞER hasar tipi belliyse -> {{ "type": "action", "function": "hasar_kaydi_olustur", "parameters": {{ "no": "{saved_no}", "hasar_tipi": "..." }} }}
+      - EĞER tip belli değilse -> {{ "type": "chat", "reply": "Çok üzgünüz. Hasarın türü nedir? (Kırık, Ezik, Islak, Kayıp)" }}
+
+    # KENDİ ADRESİNİ DEĞİŞTİRME (Gelen Kargo)
+    - "Adresimi değiştirmek istiyorum", "Kapı numarasını yanlış yazmışım":
+      - EĞER kullanıcı TAM YENİ ADRESİ (Mahalle, sokak, no, ilçe/il) söylediyse:
+        -> {{ "type": "action", "function": "adres_degistir", "parameters": {{ "no": "{saved_no}", "yeni_adres": "..." }} }}
+      - EĞER kullanıcı SADECE DÜZELTME istediyse ("Kapı nosunu 5 yap"):
+        -> {{ "type": "chat", "reply": "Adresinizin eksiksiz olması için lütfen güncel ve TAM adresinizi (Mahalle, Sokak, No, İlçe) söyler misiniz?" }}
+
+    # ALICI ADRESİNİ DEĞİŞTİRME (Giden Kargo)
+    - "Gönderdiğim kargonun adresi yanlış", "Alıcı adresini değiştirmek istiyorum":
+      - EĞER kullanıcı TAM YENİ ADRESİ söylediyse:
+        -> {{ "type": "action", "function": "alici_adresi_degistir", "parameters": {{ "no": "{saved_no}", "yeni_adres": "..." }} }}
+      - EĞER kullanıcı SADECE DÜZELTME istediyse ("Sadece apartman adını düzelt"):
+        -> {{ "type": "chat", "reply": "Karışıklık olmaması için lütfen alıcının güncel ve TAM adresini (Mahalle, Sokak, No, İlçe) söyler misiniz?" }}
+        
+     #FİNANS VE BİLGİ (YENİ EKLENENLER):
+       - "Kapıda ödeme var mı?", "Kart geçer mi?" -> {{ "type": "chat", "reply": "Evet, kapıda ödeme seçeneğimiz mevcuttur. Hem nakit hem de kredi kartı ile ödeme yapabilirsiniz." }}
+       - "Sigorta var mı?", "Kırılırsa ne olur?" -> {{ "type": "chat", "reply": "Kargo sigortası, taşıma hasarlarını ürün değeri üzerinden teminat altına alır. Detaylı bilgi SMS ile gönderilmiştir." }}
+       - "Ödeme yapamıyorum", "Hata veriyor" -> {{ "type": "chat", "reply": "Ödeme altyapısında geçici bir sorun olabilir. Lütfen 1 saat sonra tekrar deneyiniz." }}
+
+     #KAMPANYA VE VERGİ:
+       - "Kampanya var mı?", "İndirim" -> {{ "type": "action", "function": "kampanya_sorgula", "parameters": {{}} }}
+       - "Almanya vergisi ne kadar?", "Gümrük ücreti" -> {{ "type": "action", "function": "vergi_hesapla_ai", "parameters": {{ "urun_kategorisi": "...", "fiyat": "...", "hedef_ulke": "..." }} }}
+    
+    # GECİKEN / HAREKETSİZ KARGO
+    - "Kargom günlerdir aynı yerde", "Neden ilerlemiyor?", "Transferde takıldı":
+      -> {{ "type": "action", "function": "kargo_durum_destek", "parameters": {{ "takip_no": "{saved_no}", "musteri_id": "{user_id}" }} }}
+      
+    # FATURA İTİRAZI
+    - "Faturam yanlış", "İtiraz ediyorum" -> {{ "type": "action", "function": "kargo_ucret_itiraz", "parameters": {{ "no": "{saved_no}", "fatura_no": "..." }} }}
+    
+    # FATURA BİLGİSİ SORGULAMA (GÖNDERİCİ)
+    - "Faturamın durumunu öğrenmek istiyorum. ","Ne kadar ödemiştim?", "Fatura detayı nedir?":
+      -> {{ "type": "action", "function": "fatura_bilgisi_gonderici", "parameters": {{ "no": "{saved_no}" }} }}
+    
+    # TESLİMAT ERTELEME (EVDE YOKUM BİLDİRİMİ)
+    - "Evde yokum", "Evde olamayacağım", "Bugün teslim almayacağım", "Teslimatı ertele":
+      -> {{ "type": "action", "function": "evde_olmama_bildirimi", "parameters": {{ "no": "{saved_no}" }} }}
+    
+    # ÖZEL DURUM: ALICI ADI DEĞİŞTİRME
+    - "Alıcı adını değiştirmek istiyorum", "Alıcının adını yanlış girdim":
+        - EĞER yeni isim belliyse -> {{ "type": "action", "function": "alici_adi_degistir", "parameters": {{ "no": "{saved_no}", "yeni_isim": "..." }} }}
+        - EĞER yeni isim yoksa -> {{ "type": "chat", "reply": "Tabii, kargoyu teslim alacak yeni kişinin Adı ve Soyadı nedir?" }}
+    
+    3. GENEL SOHBET:
+      - Merhaba, nasılsın vb. -> {{ "type": "chat", "reply": "Hoş geldiniz. Size nasıl yardımcı olabilirim?" }}
+"""
 
     formatted_history = "\n".join(history)
     full_prompt = f"{system_prompt}\n\nGEÇMİŞ SOHBET:\n{formatted_history}\n\nKULLANICI: {user_message}\nJSON CEVAP:"
@@ -680,6 +1124,84 @@ def process_with_gemini(session_id, user_message):
                     final_prompt = f"Kullanıcıya bilgilerin eşleşmediğini söyle ve tekrar denemesini iste. SADECE yanıt metni."
                 system_res = res
 
+            elif func == "ucret_hesapla":
+                raw_result = ucret_hesapla(params.get("cikis"), params.get("varis"), params.get("desi"))
+
+                if isinstance(raw_result, (int, float)):
+                    system_res = f"{params.get('cikis')} ile {params.get('varis')} şehirleri arası {params.get('desi')} desilik paketinizin ücreti tahmini {raw_result:.2f} Türk Lirasıdır."
+                else:
+                    system_res = raw_result
+                    system_res = "Doğrulama Başarısız. Bilgiler uyuşmuyor."
+
+
+            elif func == "kampanya_sorgula":
+
+                res = kampanya_sorgula()
+                ozel_prompt = f"""
+
+                            GÖREV: Müşteri Hizmetleri Asistanısın.
+
+                            ELİNDEKİ VERİ: {res}
+
+                            MÜŞTERİ SORUSU: "{user_message}"
+                            KURALLAR:
+
+                            1. Müşteri neyi sorduysa (Öğrenci, Bahar vb.) SADECE o kampanyayı söyle.
+
+                            2. Diğer kampanyaları sayma.
+
+                            3. ASLA emoji kullanma.
+
+                            4. Cevap MAKSİMUM 1 cümle olsun.
+
+                            5. Reklam ağzıyla konuşma, doğal ol.
+                            """
+
+                final_reply = model.generate_content(ozel_prompt).text.strip()
+
+            elif func == "vergi_hesapla_ai":
+
+                res = vergi_hesapla_ai(
+
+                    params.get("urun_kategorisi"),
+
+                    params.get("fiyat"),
+
+                    params.get("hedef_ulke")
+
+                )
+
+
+
+                final_reply = model.generate_content(
+
+                    f"""
+
+                                GÖREV: Müşteriye vergi sonucunu söyle.
+
+                                VERİ: {res}
+
+
+                                KESİN KURALLAR (Uymassan sistem bozulur):
+
+                                1. ASLA başlık atma (**HESAPLAMA SONUCU** vb. YASAK).
+
+                                2. ASLA madde işareti koyma (* YASAK).
+
+                                3. ASLA açıklama yapma ("KDV şöyledir böyledir" deme).
+
+                                4. SADECE tek bir cümle kur.
+
+
+                                İSTENEN ÇIKTI FORMATI:
+
+                                "{params.get('hedef_ulke')} gönderiniz için tahmini [VERGİ TUTARI] vergi çıkıyor, toplam maliyetiniz [TOPLAM] olacaktır."
+
+                                """
+
+                ).text.strip()
+            elif func == "kargo_ucret_itiraz":
+                system_res = kargo_ucret_itiraz(saved_no, params.get("fatura_no"), user_id)
             elif func == "yanlis_teslimat_bildirimi":
                 if not params.get("dogru_adres"):
                     final_reply = "Anladım, bir karışıklık olmuş. Kargonun aslında hangi adrese teslim edilmesi gerekiyordu?"
@@ -710,9 +1232,14 @@ def process_with_gemini(session_id, user_message):
                 system_res = adres_degistir(params.get("no"), params.get("yeni_adres"))
             elif func == "alici_adresi_degistir":
                 system_res = alici_adresi_degistir(params.get("no"), params.get("yeni_adres"))
-            elif func == "alici_adi_degistir":
-                system_res = alici_adi_degistir(params.get("no"), params.get("yeni_isim"))
-
+            elif func == "kargo_durum_destek":
+                system_res = kargo_durum_destek(saved_no, user_id)
+            elif func == "fatura_bilgisi_gonderici":
+                system_res = fatura_bilgisi_gonderici(params.get("no"), user_id)
+            elif func == "evde_olmama_bildirimi":
+                system_res = evde_olmama_bildirimi(params.get("no"))
+            elif func == "supervizor_talebi":
+                system_res = supervizor_talebi(params.get("ad"), params.get("telefon"))
             if func != "kimlik_dogrula":
                 final_prompt = f"Kullanıcıya şu sistem bilgisini nazikçe ilet: {system_res}. SADECE yanıt metni."
 
