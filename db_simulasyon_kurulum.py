@@ -11,10 +11,11 @@ def create_simulation_db():
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    bugun = datetime.now().strftime('%Y-%m-%d')
 
-
+    # ---------------------------------------------------------
     # 1. ŞUBELER
-
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE subeler (
             sube_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +27,6 @@ def create_simulation_db():
             calisma_saatleri TEXT
         )
     ''')
-
     ornek_subeler = [
         ('Kadıköy Merkez', 'İstanbul', 'Kadıköy', 'Caferağa Mah. Moda Cad. No:10', '0216 333 44 55', 'Hafta içi: 09:00-18:00, Cmt: 09:00-13:00, Pazar: Kapalı'),
         ('Beşiktaş Şube', 'İstanbul', 'Beşiktaş', 'Çırağan Cad. No:25', '0212 222 11 00', 'Hafta içi: 09:00-18:00, Cmt: Kapalı, Pazar: Kapalı'),
@@ -35,51 +35,52 @@ def create_simulation_db():
     ]
     cursor.executemany('INSERT INTO subeler (sube_adi, il, ilce, adres, telefon, calisma_saatleri) VALUES (?,?,?,?,?,?)', ornek_subeler)
 
-
+    # ---------------------------------------------------------
     # 2. KURYELER
-
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE kuryeler (
             kurye_id INTEGER PRIMARY KEY,
             ad_soyad TEXT,
             bagli_sube_id INTEGER,
             telefon TEXT,
-            puan REAL, -- 5 üzerinden
+            puan REAL,
             FOREIGN KEY(bagli_sube_id) REFERENCES subeler(sube_id)
         )
     ''')
-
-    # Örnek Kuryeler
     kuryeler = [
-        (201, 'Ahmet Hızlı', 1, '0532 111 22 33', 4.8), # Kadıköy
-        (202, 'Mehmet Çevik', 2, '0533 444 55 66', 4.5), # Beşiktaş
-        (203, 'Ayşe Seri', 4, '0544 777 88 99', 4.9),   # Alsancak
-        (204, 'Burak Yıldırım', 3, '0555 000 11 22', 4.2) # Çankaya
+        (201, 'Ahmet Hızlı', 1, '0532 111 22 33', 4.8),
+        (202, 'Mehmet Çevik', 2, '0533 444 55 66', 4.5),
+        (203, 'Ayşe Seri', 4, '0544 777 88 99', 4.9),
+        (204, 'Burak Yıldırım', 3, '0555 000 11 22', 4.2)
     ]
     cursor.executemany('INSERT INTO kuryeler VALUES (?,?,?,?,?)', kuryeler)
 
-
-    # 3. MÜŞTERİLER
-
+    # ---------------------------------------------------------
+    # 3. MÜŞTERİLER (37. Niyet için bildirim_tercihi kolonu eklendi)
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE musteriler (
             musteri_id INTEGER PRIMARY KEY,
             ad_soyad TEXT,
             telefon TEXT,
-            email TEXT
+            email TEXT,
+            bildirim_tercihi TEXT DEFAULT 'SMS' -- Yeni kolon
         )
     ''')
     musteriler = [
-        (1001, 'Zeynep Yılmaz', '5551112233', 'zeynep@mail.com'),
-        (1002, 'Can Demir', '5554445566', 'can@mail.com'),
-        (1003, 'Elif Kaya', '5559998877', 'elif@mail.com'),
-        (1004, 'Doğa Ece Koca', '5415998046', 'doga@mail.com')
+        (1001, 'Zeynep Yılmaz', '5051112233', 'zeynep@mail.com', 'SMS'),
+        (1002, 'Can Demir', '5354445566', 'can@mail.com', 'SMS'),
+        (1003, 'Elif Kaya', '5459998877', 'elif@mail.com', 'E-posta'),
+        (1004, 'Doğa Ece Koca', '5415998046', 'doga@mail.com', 'SMS')
     ]
-    cursor.executemany('INSERT INTO musteriler VALUES (?,?,?,?)', musteriler)
+    cursor.executemany('INSERT INTO musteriler VALUES (?,?,?,?,?)', musteriler)
+    # 7. Niyet için mock kullanıcı kaydı
+    cursor.execute("INSERT INTO musteriler VALUES (?,?,?,?,?)", (9999, 'Misafir Kullanıcı', '1234567890', 'misafir@test.com', 'SMS'))
 
-
+    # ---------------------------------------------------------
     # 4. HAREKET ÇEŞİTLERİ
-
+    # ---------------------------------------------------------
     cursor.execute('CREATE TABLE hareket_cesitleri (id INTEGER PRIMARY KEY, durum_adi TEXT)')
     cursor.executemany('INSERT INTO hareket_cesitleri VALUES (?,?)', [
         (1, 'HAZIRLANIYOR'),
@@ -89,9 +90,9 @@ def create_simulation_db():
         (8, 'IPTAL EDILDI')
     ])
 
-
+    # ---------------------------------------------------------
     # 5. SİPARİŞLER
-
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE siparisler (
             siparis_no TEXT PRIMARY KEY,
@@ -109,9 +110,9 @@ def create_simulation_db():
     ]
     cursor.executemany('INSERT INTO siparisler VALUES (?,?,?,?)', siparisler)
 
-
+    # ---------------------------------------------------------
     # 6. KARGO TAKİP
-
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE kargo_takip (
             takip_no TEXT PRIMARY KEY,
@@ -119,7 +120,7 @@ def create_simulation_db():
             durum_id INTEGER,
             tahmini_teslim DATE,
             teslim_adresi TEXT,
-            kurye_id INTEGER, -- YENİ KOLON
+            kurye_id INTEGER,
             FOREIGN KEY(siparis_no) REFERENCES siparisler(siparis_no),
             FOREIGN KEY(kurye_id) REFERENCES kuryeler(kurye_id)
         )
@@ -127,20 +128,15 @@ def create_simulation_db():
     bugun = datetime.now().strftime('%Y-%m-%d')
 
     kargolar = [
-        # Zeynep'in kargosu (Kadıköy'den çıkıyor, Ahmet Hızlı taşıyor)
         ('123456', '123456', 3, bugun, 'Moda Cad. No:10 Kadıköy/İSTANBUL', 201),
-
-        # Teslim edilmiş kargo (Kurye işini bitirmiş olsa da kaydı durur)
         ('999999', '999999', 4, bugun, 'Pınar Mah. No:5 Sarıyer/İSTANBUL', 202),
-
-        # Hazırlanıyor (Henüz kuryeye atanmamış olabilir, kurye_id NULL olabilir veya atanmış olabilir)
         ('456789', '456789', 1, '2025-12-10', 'Barbaros Hayrettin Paşa Mah. Beylikdüzü/İSTANBUL', 203)
     ]
     cursor.executemany('INSERT INTO kargo_takip VALUES (?,?,?,?,?,?)', kargolar)
 
-
-    # 7. ŞİKAYETLER
-
+    # ---------------------------------------------------------
+    # 7. ŞİKAYETLER (4. Niyet için gerekli kolonlar)
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE sikayetler (
             sikayet_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,13 +144,16 @@ def create_simulation_db():
             olusturan_musteri_id INTEGER,
             konu TEXT,
             durum TEXT DEFAULT 'ACIK',
-            tarih DATE
+            tarih DATE,
+            tip TEXT,
+            takip_no TEXT,
+            aciklama TEXT
         )
     ''')
 
-
+    # ---------------------------------------------------------
     # 8. İADE TALEPLERİ
-
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE iade_talepleri (
             iade_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,9 +166,9 @@ def create_simulation_db():
         )
     ''')
 
-
+    # ---------------------------------------------------------
     # 9. HASAR BİLDİRİMLERİ
-
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE hasar_bildirimleri (
             hasar_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,9 +181,9 @@ def create_simulation_db():
         )
     ''')
 
-
+    # ---------------------------------------------------------
     # 10. ÜCRETLENDİRME TARİFESİ
-
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE ucretlendirme_tarife (
             id INTEGER PRIMARY KEY,
@@ -203,9 +202,29 @@ def create_simulation_db():
         VALUES (1, 35, 50, 100, 5, 20, 30, 200)
     ''')
 
+    # ---------------------------------------------------------
+    # 13. KAMPANYALAR TABLOSU (YENİ)
+    # ---------------------------------------------------------
+    cursor.execute('''
+        CREATE TABLE kampanyalar (
+            id INTEGER PRIMARY KEY,
+            baslik TEXT, 
+            detay TEXT, 
+            aktif_mi INTEGER
+        )
+    ''')
 
-    # 11. MÜŞTERİ FATURALAR
 
+    kampanyalar = [
+        ('Bahar Fırsatı', 'Bahar aylarına özel tüm kargolarda %15 indirim var.', 1),
+        ('Öğrenci İndirimi', 'Öğrenci kimliğiyle gelenlere %50 indirim uyguluyoruz.', 1),
+        ('Yılbaşı Kampanyası', '3 Gönder 2 Öde kampanyası.', 0)
+    ]
+    cursor.executemany('INSERT INTO kampanyalar (baslik, detay, aktif_mi) VALUES (?,?,?)', kampanyalar)
+
+    # ---------------------------------------------------------
+    # 10. MÜŞTERİ FATURALAR (HESAPLANAN FİYATLAR)
+    # ---------------------------------------------------------
     cursor.execute('''
         CREATE TABLE musteri_faturalar (
             fatura_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,53 +251,56 @@ def create_simulation_db():
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ''', faturalar)
 
+    # ---------------------------------------------------------
     # 12. KARGO HAREKETLERİ (GÜNCEL)
+    # ---------------------------------------------------------
     cursor.execute('''
-            CREATE TABLE kargo_hareketleri (
-                hareket_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                takip_no TEXT,
-                islem_tarihi DATETIME,
-                islem_yeri TEXT,
-                islem_tipi TEXT,
-                aciklama TEXT,
-                hedef_sube_id INTEGER, -- subeler tablosundaki ID ile eşleşmeli
-                FOREIGN KEY(takip_no) REFERENCES kargo_takip(takip_no),
-                FOREIGN KEY(hedef_sube_id) REFERENCES subeler(sube_id)
-            )
-        ''')
+        CREATE TABLE kargo_hareketleri (
+            hareket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            takip_no TEXT,
+            islem_tarihi DATETIME,
+            islem_yeri TEXT,
+            islem_tipi TEXT,
+            aciklama TEXT,
+            hedef_sube_id INTEGER, 
+            FOREIGN KEY(takip_no) REFERENCES kargo_takip(takip_no),
+            FOREIGN KEY(hedef_sube_id) REFERENCES subeler(sube_id)
+        )
+    ''')
 
-    # Senaryo: Kargo İstanbul'dan çıkıp İzmir Alsancak Şubesi'ne (ID: 4) gidiyor.
     hareketler = [
         ('123456', '2025-12-08 09:00', 'Kadıköy Şube', 'Kabul', 'Kargo şubeden kabul edildi.', 4),
         ('123456', '2025-12-08 14:30', 'Kadıköy Şube', 'Transfer', 'Transfer aracına yüklendi.', 4),
         ('123456', '2025-12-08 17:00', 'Tuzla Aktarma Merkezi', 'Giriş', 'Aktarma merkezine ulaştı.', 4),
         ('123456', '2025-12-09 08:30', 'Tuzla Aktarma Merkezi', 'Çıkış', 'İzmir aracına yüklendi.', 4),
         ('123456', '2025-12-09 14:00', 'Manisa Aktarma', 'Giriş', 'Bölge aktarmaya ulaştı.', 4),
-        # SON DURUM: Gerçek bir şubeye (Alsancak - ID:4) varış
         ('123456', '2025-12-10 09:00', 'Alsancak Şube', 'Varış', 'Varış şubesine ulaştı, dağıtıma hazırlanıyor.', 4)
     ]
 
     cursor.executemany('''
-            INSERT INTO kargo_hareketleri 
-            (takip_no, islem_tarihi, islem_yeri, islem_tipi, aciklama, hedef_sube_id) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', hareketler)
+        INSERT INTO kargo_hareketleri 
+        (takip_no, islem_tarihi, islem_yeri, islem_tipi, aciklama, hedef_sube_id) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', hareketler)
 
-    # 13. SUPERVISOR GÖRÜŞME TALEPLERİ (Basitleştirilmiş)
+    # ---------------------------------------------------------
+    # 13. SUPERVISOR GÖRÜŞME TALEPLERİ (YENİ TABLO)
+    # ---------------------------------------------------------
     cursor.execute('''
-                CREATE TABLE IF NOT EXISTS supervisor_gorusmeleri (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                musteri_id INTEGER,
-                girilen_ad TEXT,
-                girilen_telefon TEXT,
-                talep_tarihi DATETIME,
-                durum TEXT DEFAULT 'BEKLIYOR'
-                )
-            ''')
+        CREATE TABLE IF NOT EXISTS supervisor_gorusmeleri (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        musteri_id INTEGER,
+        girilen_ad TEXT,
+        girilen_telefon TEXT,
+        talep_tarihi DATETIME,
+        durum TEXT DEFAULT 'BEKLIYOR'
+        )
+    ''')
 
     conn.commit()
     conn.close()
-    print("✅ Veritabanı KARGO HAREKETLERİ (Gerçek Şube Bağlantılı) ile güncellendi!")
+    print("✅ Veritabanı YENİ NİYETLER İÇİN güncellendi ve hazır!")
+
 
 if __name__ == "__main__":
     create_simulation_db()
