@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sesli Asistan Modu</title>
+    <title>Sesli Asistan Modu (+Debug)</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
@@ -94,12 +94,13 @@
             text-align: center;
             max-width: 80%;
             min-height: 24px;
-            margin-bottom: 50px;
+            margin-bottom: 30px;
         }
 
         .controls {
             display: flex;
             gap: 20px;
+            margin-bottom: 30px;
         }
 
         .btn {
@@ -128,6 +129,47 @@
             display: none; /* Başlangıçta gizli */
         }
 
+        /* --- DEBUG / YAZIŞMA ALANI --- */
+        .debug-area {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+            max-width: 500px;
+            padding: 0 20px;
+            box-sizing: border-box;
+            border-top: 1px solid #374151;
+            padding-top: 20px;
+        }
+
+        .debug-input {
+            flex: 1;
+            padding: 12px 20px;
+            border-radius: 25px;
+            border: 1px solid #374151;
+            background-color: #1f2937;
+            color: white;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .debug-input:focus {
+            border-color: #3b82f6;
+        }
+
+        .debug-btn {
+            padding: 12px 20px;
+            border-radius: 25px;
+            border: none;
+            background-color: #3b82f6;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .debug-btn:hover {
+            background-color: #2563eb;
+        }
+
     </style>
 </head>
 <body>
@@ -153,13 +195,19 @@
         </button>
     </div>
 
+    <div class="debug-area">
+        <input type="text" id="debugInput" class="debug-input" placeholder="Yazarak test et (Enter)...">
+        <button class="debug-btn" onclick="sendDebugMessage()">
+            <i class="fas fa-paper-plane"></i>
+        </button>
+    </div>
+
     <audio id="audioPlayer" style="display:none;"></audio>
 
     <script>
 
         let sessionId = localStorage.getItem("chat_session_id");
 
-        // Eğer ID yoksa yeni bir tane oluşturup kaydediyoruz.
         if (!sessionId) {
             sessionId = "user_" + Math.random().toString(36).substring(7) + "_" + Date.now();
             localStorage.setItem("chat_session_id", sessionId);
@@ -167,7 +215,6 @@
         } else {
             console.log("Mevcut Session ID kullanılıyor:", sessionId);
         }
-        // ----------------------------------------------
 
         const avatar = document.getElementById('avatarContainer');
         const icon = document.getElementById('statusIcon');
@@ -176,6 +223,7 @@
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const audioPlayer = document.getElementById('audioPlayer');
+        const debugInput = document.getElementById('debugInput');
 
         let recognition;
         let isCallActive = false;
@@ -228,6 +276,25 @@
             setVisualState('idle');
             statusMsg.innerText = "Görüşme sonlandırıldı.";
         }
+
+        // --- YENİ EKLENEN: TEXT İLE DEBUG FONKSİYONU ---
+        function sendDebugMessage() {
+            const text = debugInput.value.trim();
+            if (text) {
+                transcriptMsg.innerText = `"${text}"`; // Ekrana yaz
+                sendToBackend(text); // Backend'e yolla
+                debugInput.value = ''; // Kutuyu temizle
+            }
+        }
+
+        // Enter tuşu desteği
+        debugInput.addEventListener("keypress", function(event) {
+            if (event.key === "Enter") {
+                sendDebugMessage();
+            }
+        });
+        // ----------------------------------------------
+
         async function sendToBackend(text) {
             setVisualState('processing');
 
@@ -236,7 +303,6 @@
             const numberPattern = /^[0-9\s-]+$/;
             if (numberPattern.test(text)) {
                 cleanedText = text.replace(/\s+/g, '').replace(/-/g, '');
-                console.log("Sayısal Giriş Temizlendi:", cleanedText);
             }
 
             try {
@@ -262,6 +328,7 @@
                     playResponseAudio(data.audio);
                 } else {
                     if(isCallActive) recognition.start();
+                    else setVisualState('idle'); // Arama aktif değilse boşa düş
                 }
 
             } catch (error) {
@@ -286,6 +353,8 @@
                     } catch(e) {
                         console.log("Mikrofon zaten hazır.");
                     }
+                } else {
+                    setVisualState('idle');
                 }
             };
         }
