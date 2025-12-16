@@ -153,6 +153,10 @@ def process_with_gemini(session_id, user_message, user_sessions):
 
     ÖN İŞLEM: Tek tek söylenen sayıları birleştir (bir iki üç -> 123).
     ÇIKTI: SADECE JSON.
+    
+    !!! KESİN VE DEĞİŞMEZ KURAL !!!
+    - CEVAPLARDA ASLA EMOJİ KULLANMA (Örn: 😊, 👋, 📦 YASAK). 
+    - SADECE DÜZ METİN VE NOKTALAMA İŞARETLERİ KULLAN.
 
     ANALİZ KURALLARI VE ÖNCELİKLERİ:
 
@@ -512,9 +516,9 @@ def process_with_gemini(session_id, user_message, user_sessions):
 
             if is_personal_intent or (user_message.lower().strip() not in ["merhaba", "slm", "selam", "nasılsın"]):
                 session_data['pending_intent'] = user_message
-                print(f"📥 [DEBUG] YENİ NİYET KAYDEDİLDİ (Parçalı Giriş için): '{user_message}'")
+                print(f"[DEBUG] YENİ NİYET KAYDEDİLDİ (Parçalı Giriş için): '{user_message}'")
             else:
-                print(f"🔒 [DEBUG] NİYET KAYDEDİLMEDİ (Genel Sorgu)")
+                print(f"[DEBUG] NİYET KAYDEDİLMEDİ (Genel Sorgu)")
 
         session_data['history'].append(f"KULLANICI: {user_message}")
         session_data['history'].append(f"ASİSTAN: {final_reply}")
