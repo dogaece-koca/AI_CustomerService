@@ -6,8 +6,13 @@ from sklearn.naive_bayes import MultinomialNB
 
 def teslimat_suresi_hesapla(mesafe, agirlik):
     try:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        current_dir = os.path.dirname(os.path.abspath(__file__))  # modules klasörü
+        base_dir = os.path.dirname(current_dir)  # Ana proje klasörü
+
         csv_path = os.path.join(base_dir, 'teslimat_verisi.csv')
+
+        # Hata Ayıklama İçin: Konsola aradığı yolu yazdıralım
+        print(f"🔍 ML Modülü CSV Arıyor: {csv_path}")
 
         if not os.path.exists(csv_path):
             return "HATA: 'teslimat_verisi.csv' dosyası bulunamadı."
@@ -41,37 +46,52 @@ def teslimat_suresi_hesapla(mesafe, agirlik):
 
 def duygu_analizi_yap(gelen_cumle):
     try:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        csv_path = os.path.join(base_dir, 'duygu_analizi.csv')
+        CSV_DOSYA_ADI = 'duygu_analizi.csv'
+        SUTUN_YORUM = 'text'
+        SUTUN_ETIKET = 'label'
+
+        # 1. DOSYAYI BUL
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.path.dirname(current_dir)
+        csv_path = os.path.join(base_dir, CSV_DOSYA_ADI)
 
         if not os.path.exists(csv_path):
+            print(f"ML UYARI: '{CSV_DOSYA_ADI}' dosyası bulunamadı.")
             return "NÖTR (Veri Yok)", 0
 
-        df = pd.read_csv(csv_path)
+        # 2. VERİYİ OKU
+        try:
+            df = pd.read_csv(csv_path, encoding='utf-8')
+        except:
+            # Türkçe karakter sorunu olursa diye
+            df = pd.read_csv(csv_path, encoding='utf-16')
 
+            # 3. VERİ TEMİZLİĞİ
+        df = df.dropna(subset=[SUTUN_YORUM, SUTUN_ETIKET])
+        df[SUTUN_YORUM] = df[SUTUN_YORUM].astype(str)
+
+        # 4. MODELİ EĞİT
         vectorizer = CountVectorizer()
-        X = vectorizer.fit_transform(df['text'])
-        y = df['label']
+        X = vectorizer.fit_transform(df[SUTUN_YORUM])
+        y = df[SUTUN_ETIKET]
 
         clf = MultinomialNB()
         clf.fit(X, y)
 
+        # 5. TAHMİN YAP
         tahmin = clf.predict(vectorizer.transform([gelen_cumle]))[0]
+        sonuc_str = str(tahmin)  # Büyük/küçük harf duyarlılığı için string yapalım
 
-        skor = 0
-        durum_mesaji = "NÖTR"
+        # --- YENİ VERİ SETİNE GÖRE ETİKET KONTROLÜ ---
+        # Senin veri setinde: "Olumlu", "Olumsuz", "Tarafsız" yazıyor.
 
-        if tahmin == "Olumlu":
-            skor = 2
-            durum_mesaji = "MUTLU"
-        elif tahmin == "Olumsuz":
-            skor = -2
-            durum_mesaji = "KIZGIN"
-        else:  # Tarafsız
-            skor = 0
-            durum_mesaji = "NÖTR"
-
-        return durum_mesaji, skor
+        if sonuc_str in ["Olumlu", "Pozitif", "1", "positive", "iyi"]:
+            return "MUTLU (POZİTİF)", 2
+        elif sonuc_str in ["Olumsuz", "Negatif", "-1", "negative", "kötü"]:
+            return "KIZGIN (NEGATİF)", -2
+        else:
+            # "Tarafsız" veya diğer durumlar
+            return "NÖTR", 0
 
     except Exception as e:
         print(f"ML Hatası: {e}")

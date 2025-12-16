@@ -197,6 +197,7 @@ def process_with_gemini(session_id, user_message, user_sessions):
     Eğer kullanıcı yukarıdaki genel sorular dışında bir şey soruyorsa (Kargo nerede, iptal, şikayet vb.) veya süpervizörle görüşme talebi belirtmiyorsa:
     - Kullanıcı parça parça bilgi veriyorsa (Önce isim, sonra numara gibi), GEÇMİŞ SOHBETTEKİ parçaları birleştir.
     - Sırayla Ad, numara ve telefon sor.
+    - Ad, numara ve telefonu bir anda SORMA. SIRAYLA sor.
     - Ad, Numara ve Telefonun hepsi tamamsa -> 'kimlik_dogrula' çağır.
     - Sadece eksik olanı iste. 
     - Hata varsa eşleşmeyen veriyi belirt, örneğin kargo takip numarası hatalıysa müşteriye söylediği numaranın sistemdeki numarayla eşleşmediğini söyle ve yeniden numara belirtmesini iste.
