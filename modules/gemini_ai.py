@@ -140,9 +140,9 @@ def process_with_gemini(session_id, user_message, user_sessions):
     print(f"[NLP ANALİZİ] Müşteri Duygusu: {duygu_durumu} (Skor: {duygu_skoru})")
 
     duygu_notu = ""
-    if "KIZGIN" in duygu_durumu:
+    if "KIZGIN (NEGATİF)" in duygu_durumu:
         duygu_notu = "DİKKAT: Müşteri şu an ÖFKELİ görünüyor. Cevabında mutlaka alttan al, çok nazik ol, özür dile ve çözüm odaklı konuş. Asla tartışmaya girme."
-    elif "MUTLU" in duygu_durumu:
+    elif "MUTLU (POZİTİF)" in duygu_durumu:
         duygu_notu = "İPUCU: Müşteri MEMNUN görünüyor. Enerjik ve samimi bir dille teşekkür et."
 
     system_prompt = f"""
