@@ -178,7 +178,7 @@ def process_with_gemini(session_id, user_message, user_sessions):
     - "Öğrenci indirimi var mı?", "Kampanyalarınız neler?", "Bana özel plan var mı?", "İndirim", "kampanya", "fırsat", "özel teklif", "öğrenci", "plan" kelimelerinden HERHANGİ BİRİ GEÇİYORSA VEYA SORULUYORSA İLK ÖNCE BU KURALI ÇALIŞTIR.
       -> {{ "type": "action", "function": "kampanya_sorgula", "parameters": {{}} }}
 
-    # FİYAT SORGULAMA (YENİ)
+    # FİYAT SORGULAMA 
     - "İstanbul'dan Ankara'ya kargo ne kadar?", "Fiyat hesapla"
       -> {{ "type": "action", "function": "ucret_hesapla", "parameters": {{ "cikis": "...", "varis": "...", "desi": "..." }} }}
       (Eğer eksik bilgi varsa sor).
@@ -237,11 +237,11 @@ def process_with_gemini(session_id, user_message, user_sessions):
       - EĞER sebep HİÇ BELLİ DEĞİLSE:
         -> {{ "type": "chat", "reply": "İade işlemini başlatmak için lütfen iade sebebinizi kısaca belirtir misiniz?" }}
 
-    # İPTAL TALEBİ (YENİ)
+    # İPTAL TALEBİ 
     - "Kargoyu iptal et", "Vazgeçtim göndermeyeceğim", "İptal etmek istiyorum":
       -> {{ "type": "action", "function": "kargo_iptal_et", "parameters": {{ "no": "{saved_no}" }} }}
 
-    # TESLİMAT SAATİ (YENİ EKLENDİ)
+    # TESLİMAT SAATİ 
     - "Ne zaman gelir?", "Saat kaçta teslim olur?", "Hangi gün gelir?":
       -> {{ "type": "action", "function": "tahmini_teslimat", "parameters": {{ "no": "{saved_no}" }} }}
 
