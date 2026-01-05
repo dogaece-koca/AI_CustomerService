@@ -32,6 +32,7 @@ def kampanya_sorgula():
     finally:
         conn.close()
 
+
 def kimlik_dogrula(siparis_no, ad, telefon):
     print(f"\n--- DOĞRULAMA DEBUG ---")
     print(f"Gelen Bilgiler -> Ad: {ad}, No: {siparis_no}, Tel: {telefon}")
@@ -41,6 +42,7 @@ def kimlik_dogrula(siparis_no, ad, telefon):
 
     conn = get_db_connection()
     try:
+        # --- 1. TELEFON TEMİZLEME (Senin Kodun) ---
         temiz_telefon = re.sub(r'[^0-9]', '', str(telefon))
 
         if len(temiz_telefon) > 10 and temiz_telefon.startswith('90'):
@@ -57,33 +59,62 @@ def kimlik_dogrula(siparis_no, ad, telefon):
 
         print(f"DB İçin Temiz Telefon: {temiz_telefon}")
 
+        # --- 2. SQL SORGUSU (DEĞİŞİKLİK BURADA) ---
+        # "AND m.telefon = ?" kısmını kaldırdık.
+        # Önce sadece sipariş no ile ilgili kişileri çekiyoruz.
         query = """
-            SELECT s.siparis_no, m.musteri_id, m.ad_soyad,
+            SELECT s.siparis_no, m.musteri_id, m.ad_soyad, m.telefon,
                    CASE 
                         WHEN s.gonderici_id = m.musteri_id THEN 'gonderici'
                         WHEN s.alici_id = m.musteri_id THEN 'alici'
                    END as rol
             FROM musteriler m 
             JOIN siparisler s ON (s.gonderici_id = m.musteri_id OR s.alici_id = m.musteri_id)
-            WHERE s.siparis_no = ?
-              AND m.telefon = ?
+            WHERE s.siparis_no = ? 
+               OR s.siparis_no IN (SELECT siparis_no FROM kargo_takip WHERE takip_no = ?)
         """
-        row = conn.execute(query, (siparis_no, temiz_telefon)).fetchone()
+        # Not: Hem sipariş no hem takip no ile arama şansı ekledim (OR kısmı).
+        rows = conn.execute(query, (siparis_no, siparis_no)).fetchall()
 
-        if not row:
-            print("DB Sonucu: Kayıt bulunamadı (Telefon veya Sipariş No yanlış).")
-            return "BASARISIZ|Bilgiler eşleşmiyor."
+        if not rows:
+            print("DB Sonucu: Sipariş bulunamadı.")
+            return "BASARISIZ|Sipariş veya Takip numarası bulunamadı."
 
-        db_ad_soyad = row['ad_soyad']
-        girilen_ad_temiz = metin_temizle(ad)
-        db_ad_temiz = metin_temizle(db_ad_soyad)
+        # --- 3. PYTHON TARAFINDA DETAYLI KONTROL ---
+        eslesen_kisi = None
+        isim_var_mi = False
 
-        if girilen_ad_temiz in db_ad_temiz or db_ad_temiz in girilen_ad_temiz:
-            print("İsim Eşleşmesi BAŞARILI.")
-            return f"BASARILI|{row['siparis_no']}|{row['ad_soyad']}|{row['rol']}|{row['musteri_id']}"
+        girilen_ad_temiz = metin_temizle(ad).lower()
+
+        for row in rows:
+            db_ad_temiz = metin_temizle(row['ad_soyad']).lower()
+
+            # A) İSİM KONTROLÜ
+            if girilen_ad_temiz in db_ad_temiz or db_ad_temiz in girilen_ad_temiz:
+                isim_var_mi = True
+
+                # B) TELEFON KONTROLÜ (Sadece ismi tutan kişinin telefonuna bakılır)
+                # Veritabanındaki telefonu da aynı mantıkla temizleyelim ki eşleşme garanti olsun
+                db_tel_raw = str(row['telefon'])
+                db_tel_clean = re.sub(r'[^0-9]', '', db_tel_raw)
+                if len(db_tel_clean) > 10: db_tel_clean = db_tel_clean[-10:]
+
+                if temiz_telefon == db_tel_clean:
+                    eslesen_kisi = row
+                    break  # Tam eşleşme bulundu
+
+        # --- 4. SONUÇ DÖNDÜRME ---
+        if eslesen_kisi:
+            print(f"TAM EŞLEŞME BAŞARILI: {eslesen_kisi['ad_soyad']}")
+            return f"BASARILI|{eslesen_kisi['siparis_no']}|{eslesen_kisi['ad_soyad']}|{eslesen_kisi['rol']}|{eslesen_kisi['musteri_id']}"
+
+        elif isim_var_mi:
+            print("HATA: İsim doğru ama telefon yanlış.")
+            return "HATA|Telefon numarası uyuşmuyor."
+
         else:
-            print("İsim Eşleşmesi BAŞARISIZ.")
-            return "BASARISIZ|İsim bilgisi uyuşmuyor."
+            print("HATA: İsim siparişteki kişilerle uyuşmuyor.")
+            return "HATA|İsim bilgisi uyuşmuyor."
 
     except Exception as e:
         print(f"HATA: {e}")

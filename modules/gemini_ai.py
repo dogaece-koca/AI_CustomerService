@@ -214,7 +214,7 @@ def process_with_gemini(session_id, user_message, user_sessions):
           
        D. FİNAL (Hepsi Tamam): Ad + Takip No + Telefon var.
           -> {{ "type": "action", "function": "kimlik_dogrula", "parameters": {{ "ad": "...", "no": "...", "telefon": "..." }} }}
-       
+          
        
     ANALİZ KURALLARI VE ÖNCELİKLERİ:
 
@@ -448,18 +448,20 @@ def process_with_gemini(session_id, user_message, user_sessions):
                     hata_detayi = db_sonuc.split('|')[-1] if '|' in db_sonuc else "Bilgiler eşleşmedi."
 
                     hata_prompt = f"""
-                                GÖREV: Bir kargo şirketi sesli asistanısın.
-                                DURUM: Kullanıcı kimlik doğrulaması yapamadı.
-                                SİSTEM HATASI: {hata_detayi} (Bunu kullanıcıya teknik terimle söyleme!)
-                                YAPILACAKLAR:
-                                1. Kullanıcıya nazikçe bilgilerin sistemdekiyle eşleşmediğini söyle.
-                                2. "{hata_detayi}" bilgisine göre ipucu ver. 
-                                    - Eğer sorun isimdeyse: "Sistemdeki kayıtla söylediğiniz isim eşleşmedi, rica etsem isminizi tekrar söyler misiniz?" de.
-                                    - Eğer sorun numaradaysa: "Bu numaraya ait bir kayıt bulamadım, takip numaranızı kontrol edip tekrar okur musunuz?" de.
-                                3. Tekrar denemesini iste.
-                                4. ASLA teknik hata kodlarını (BASARISIZ|...) kullanıcıya okuma.
-                                5. Kısa tut (Sesli okunacak).
-                                """
+                                    GÖREV: Bir kargo şirketi sesli asistanısın.
+                                    DURUM: Kullanıcı kimlik doğrulaması yapamadı.
+                                    SİSTEM HATASI: {hata_detayi} (Bunu kullanıcıya teknik terimle söyleme!)
+
+                                    YAPILACAKLAR:
+                                    1. Kullanıcıya nazikçe bilgilerin sistemdekiyle eşleşmediğini söyle.
+                                    2. "{hata_detayi}" içeriğine göre şu özel cevaplardan birini seç:
+                                        - Hata TAKİP NUMARASI ile ilgiliyse: "Bu takip numarasına ait bir kayıt bulamadım, numarayı kontrol edip tekrar okur musunuz?"
+                                        - Hata İSİM ile ilgiliyse: "Takip numarası doğru ancak isim sistemdekiyle eşleşmedi. Lütfen isminizi tam olarak tekrar söyler misiniz?"
+                                        - Hata TELEFON ile ilgiliyse: "Takip numarası ve isim doğru ancak telefon numarası sistemdekiyle uyuşmuyor. Lütfen sisteme kayıtlı telefon numaranızı tekrar söyler misiniz?"
+
+                                    3. Tekrar denemesini iste.
+                                    4. ASLA teknik hata kodlarını (BASARISIZ|...) kullanıcıya okuma. Sadece yukarıdaki cümleyi kur.
+                                 """
                     final_reply = model.generate_content(hata_prompt).text.strip()
                     system_res = f"Doğrulama Hatası: {hata_detayi}"
 
