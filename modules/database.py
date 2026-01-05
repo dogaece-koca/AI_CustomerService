@@ -174,9 +174,6 @@ def kargo_ucret_itiraz(siparis_no, fatura_no, musteri_id):
     finally:
         conn.close()
 
-def alici_adresi_degistir(no, yeni_adres):
-    return adres_degistir(no, yeni_adres)
-
 def sikayet_olustur(no, konu, musteri_id):
     if not no or not konu: return "Şikayet konusu eksik."
     safe_id = musteri_id if musteri_id else 0

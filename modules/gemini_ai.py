@@ -1,7 +1,7 @@
 from modules.database import kimlik_dogrula, ucret_hesapla, kampanya_sorgula, kargo_ucret_itiraz, \
     yanlis_teslimat_bildirimi, sube_saat_sorgula, sube_sorgula, en_yakin_sube_bul, sube_telefon_sorgula, \
     sikayet_olustur, hasar_kaydi_olustur, kargo_bilgisi_getir, tahmini_teslimat_saati_getir, iade_islemi_baslat, \
-    kargo_iptal_et, adres_degistir, alici_adresi_degistir, kargo_durum_destek, fatura_bilgisi_gonderici, \
+    kargo_iptal_et, adres_degistir, kargo_durum_destek, fatura_bilgisi_gonderici, \
     evde_olmama_bildirimi, supervizor_talebi, bildirim_ayari_degistir,  gecikme_sikayeti, \
     kurye_gelmedi_sikayeti, hizli_teslimat_ovgu, kimlik_dogrulama_sorunu, yurt_disi_kargo_kosul, \
     alici_bilgisi_guncelle, isimle_kargo_bul
@@ -359,7 +359,7 @@ def process_with_gemini(session_id, user_message, user_sessions):
     # ALICI ADRESİNİ DEĞİŞTİRME (Giden Kargo)
     - "Gönderdiğim kargonun adresi yanlış", "Alıcı adresini değiştirmek istiyorum":
       - EĞER kullanıcı TAM YENİ ADRESİ söylediyse:
-        -> {{ "type": "action", "function": "alici_adresi_degistir", "parameters": {{ "no": "{saved_no}", "yeni_adres": "..." }} }}
+        -> {{ "type": "action", "function": "adres_degistir", "parameters": {{ "no": "{saved_no}", "yeni_adres": "..." }} }}
       - EĞER kullanıcı SADECE DÜZELTME istediyse ("Sadece apartman adını düzelt"):
         -> {{ "type": "chat", "reply": "Karışıklık olmaması için lütfen alıcının güncel ve TAM adresini (Mahalle, Sokak, No, İlçe) söyler misiniz?" }}
 
@@ -553,9 +553,6 @@ def process_with_gemini(session_id, user_message, user_sessions):
             elif func == "adres_degistir":
                 session_data['pending_intent'] = None
                 system_res = adres_degistir(params.get("no"), params.get("yeni_adres"))
-            elif func == "alici_adresi_degistir":
-                session_data['pending_intent'] = None
-                system_res = alici_adresi_degistir(params.get("no"), params.get("yeni_adres"))
             elif func == "kargo_durum_destek":
                 session_data['pending_intent'] = None
                 system_res = kargo_durum_destek(saved_no, user_id)
