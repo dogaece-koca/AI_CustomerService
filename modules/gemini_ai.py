@@ -3,7 +3,7 @@ from modules.database import kimlik_dogrula, ucret_hesapla, kampanya_sorgula, ka
     sikayet_olustur, hasar_kaydi_olustur, kargo_bilgisi_getir, tahmini_teslimat_saati_getir, iade_islemi_baslat, \
     kargo_iptal_et, adres_degistir, kargo_durum_destek, fatura_bilgisi_gonderici, \
     evde_olmama_bildirimi, supervizor_talebi, bildirim_ayari_degistir,  gecikme_sikayeti, \
-    kurye_gelmedi_sikayeti, hizli_teslimat_ovgu, kimlik_dogrulama_sorunu, yurt_disi_kargo_kosul, \
+    kurye_gelmedi_sikayeti, hizli_teslimat_ovgu, \
     alici_bilgisi_guncelle, isimle_kargo_bul
 from modules.ml_modulu import duygu_analizi_yap, teslimat_suresi_hesapla
 from dotenv import load_dotenv
@@ -336,9 +336,6 @@ def process_with_gemini(session_id, user_message, user_sessions):
     - "Laptop Almanya'ya gidiyor fiyat 1000 Euro", "Almanya'ya ne kadar vergi çıkar?"
       -> {{ "type": "action", "function": "vergi_hesapla_ai", "parameters": {{ "urun_kategorisi": "...", "fiyat": "...", "hedef_ulke": "..." }} }}
 
-    # YURT DIŞI KARGO KOŞULLARI 
-    - "Yurt dışı kargo", "gümrük", "ülke koşulları" -> {{ "type": "action", "function": "yurt_disi_kargo_kosul", "parameters": {{}} }}
-
     # GENEL MÜŞTERİ ŞİKAYETİ (Kurye Kaba, Yanlış Faturalandırma vb.)
     - "Şikayetim var", "Kurye kaba davrandı", "Yanlış fatura geldi":
       - Konu belli değilse -> {{ "type": "chat", "reply": "Anlıyorum, yaşadığınız sorun nedir? Lütfen şikayetinizi kısaca belirtin." }}
@@ -510,7 +507,7 @@ def process_with_gemini(session_id, user_message, user_sessions):
                 final_reply = system_res
             elif func == "kargo_ucret_itiraz":
                 session_data['pending_intent'] = None
-                system_res = kargo_ucret_itiraz(saved_no, params.get("fatura_no"), user_id)
+                system_res = kargo_ucret_itiraz(saved_no, params.get("fatura_no"))
             elif func == "yanlis_teslimat_bildirimi":
                 session_data['pending_intent'] = None
                 gelen_adres = params.get("dogru_adres")
@@ -609,12 +606,6 @@ def process_with_gemini(session_id, user_message, user_sessions):
             elif func == "hizli_teslimat_ovgu":
                 session_data['pending_intent'] = None
                 system_res = hizli_teslimat_ovgu()
-            elif func == "kimlik_dogrulama_sorunu":
-                session_data['pending_intent'] = None
-                system_res = kimlik_dogrulama_sorunu()
-            elif func == "yurt_disi_kargo_kosul":
-                session_data['pending_intent'] = None
-                system_res = yurt_disi_kargo_kosul()
             elif func == "bildirim_ayari_degistir":
                 session_data['pending_intent'] = None
                 system_res = bildirim_ayari_degistir(params.get("tip"), user_id)

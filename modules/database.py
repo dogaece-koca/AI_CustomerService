@@ -26,7 +26,8 @@ def metin_temizle(text):
 def kampanya_sorgula():
     conn = get_db_connection()
     try:
-        rows = conn.execute("SELECT baslik, detay FROM kampanyalar WHERE aktif_mi = 1").fetchall()
+        rows = conn.execute("SELECT baslik, detay "
+                            "FROM kampanyalar WHERE aktif_mi = 1").fetchall()
         if not rows: return "Aktif kampanya yok."
         return " | ".join([f"{r['baslik']}: {r['detay']}" for r in rows])
     finally:
@@ -59,9 +60,6 @@ def kimlik_dogrula(siparis_no, ad, telefon):
 
         print(f"DB İçin Temiz Telefon: {temiz_telefon}")
 
-        # --- 2. SQL SORGUSU (DEĞİŞİKLİK BURADA) ---
-        # "AND m.telefon = ?" kısmını kaldırdık.
-        # Önce sadece sipariş no ile ilgili kişileri çekiyoruz.
         query = """
             SELECT s.siparis_no, m.musteri_id, m.ad_soyad, m.telefon,
                    CASE 
@@ -73,14 +71,13 @@ def kimlik_dogrula(siparis_no, ad, telefon):
             WHERE s.siparis_no = ? 
                OR s.siparis_no IN (SELECT siparis_no FROM kargo_takip WHERE takip_no = ?)
         """
-        # Not: Hem sipariş no hem takip no ile arama şansı ekledim (OR kısmı).
+
         rows = conn.execute(query, (siparis_no, siparis_no)).fetchall()
 
         if not rows:
             print("DB Sonucu: Sipariş bulunamadı.")
             return "BASARISIZ|Sipariş veya Takip numarası bulunamadı."
 
-        # --- 3. PYTHON TARAFINDA DETAYLI KONTROL ---
         eslesen_kisi = None
         isim_var_mi = False
 
@@ -89,21 +86,17 @@ def kimlik_dogrula(siparis_no, ad, telefon):
         for row in rows:
             db_ad_temiz = metin_temizle(row['ad_soyad']).lower()
 
-            # A) İSİM KONTROLÜ
             if girilen_ad_temiz in db_ad_temiz or db_ad_temiz in girilen_ad_temiz:
                 isim_var_mi = True
 
-                # B) TELEFON KONTROLÜ (Sadece ismi tutan kişinin telefonuna bakılır)
-                # Veritabanındaki telefonu da aynı mantıkla temizleyelim ki eşleşme garanti olsun
                 db_tel_raw = str(row['telefon'])
                 db_tel_clean = re.sub(r'[^0-9]', '', db_tel_raw)
                 if len(db_tel_clean) > 10: db_tel_clean = db_tel_clean[-10:]
 
                 if temiz_telefon == db_tel_clean:
                     eslesen_kisi = row
-                    break  # Tam eşleşme bulundu
+                    break
 
-        # --- 4. SONUÇ DÖNDÜRME ---
         if eslesen_kisi:
             print(f"TAM EŞLEŞME BAŞARILI: {eslesen_kisi['ad_soyad']}")
             return f"BASARILI|{eslesen_kisi['siparis_no']}|{eslesen_kisi['ad_soyad']}|{eslesen_kisi['rol']}|{eslesen_kisi['musteri_id']}"
@@ -139,7 +132,8 @@ def ucret_hesapla(cikis, varis, desi):
 
     conn = get_db_connection()
     try:
-        tarife = conn.execute("SELECT * FROM ucretlendirme_tarife WHERE id=1").fetchone()
+        tarife = conn.execute("SELECT * FROM ucretlendirme_tarife "
+                              "WHERE id=1").fetchone()
 
         if not tarife: return "Veritabanında tarife bilgisi bulunamadı."
 
@@ -172,14 +166,15 @@ def ucret_hesapla(cikis, varis, desi):
     finally:
         conn.close()
 
-def kargo_ucret_itiraz(siparis_no, fatura_no, musteri_id):
+def kargo_ucret_itiraz(siparis_no, fatura_no):
     if not siparis_no or not fatura_no:
         return "Sipariş No ve Fatura No gereklidir."
 
     conn = get_db_connection()
     try:
         fatura_id_temiz = str(fatura_no).replace("#", "").strip()
-        fatura = conn.execute("SELECT * FROM musteri_faturalar WHERE fatura_id = ? AND siparis_no = ?",
+        fatura = conn.execute("SELECT * FROM musteri_faturalar"
+                              " WHERE fatura_id = ? AND siparis_no = ?",
                               (fatura_id_temiz, siparis_no)).fetchone()
 
         if not fatura: return "Fatura bulunamadı."
@@ -213,7 +208,9 @@ def sikayet_olustur(no, konu, musteri_id):
     try:
         bugun = datetime.now().strftime('%Y-%m-%d')
         conn.execute(
-            "INSERT INTO sikayetler (siparis_no, olusturan_musteri_id, konu, tarih, durum) VALUES (?, ?, ?, ?, 'ACIK')",
+            "INSERT INTO sikayetler (siparis_no, "
+            "olusturan_musteri_id, konu, tarih, durum) "
+            "VALUES (?, ?, ?, ?, 'ACIK')",
             (no, safe_id, konu, bugun)
         )
         conn.commit()
@@ -255,7 +252,8 @@ def gecikme_sikayeti(no, musteri_id):
             aciklama = f"Müşteri kargoyu almadığını beyan etti. Sistemde statü: {mevcut_durum}. Teslimat itirazı oluşturuldu."
 
             cursor.execute("""
-                INSERT INTO sikayetler (olusturan_musteri_id, takip_no, tip, aciklama, tarih, durum) 
+                INSERT INTO sikayetler (olusturan_musteri_id, 
+                takip_no, tip, aciklama, tarih, durum) 
                 VALUES (?, ?, ?, ?, datetime('now'), 'INCELEMEDE')
             """, (musteri_id, no, 'Teslimat İtirazı', aciklama))
 
@@ -285,7 +283,8 @@ def gecikme_sikayeti(no, musteri_id):
             aciklama = f"{no} nolu kargo gecikti. Teslimat {yeni_tarih_str} tarihine ötelendi."
 
             cursor.execute("""
-                            INSERT INTO sikayetler (olusturan_musteri_id, takip_no, tip, aciklama, tarih, durum) 
+                            INSERT INTO sikayetler (olusturan_musteri_id,
+                             takip_no, tip, aciklama, tarih, durum) 
                             VALUES (?, ?, ?, ?, datetime('now'), 'ACIK')
                         """, (musteri_id, no, 'Gecikme Şikayeti', aciklama))
 
@@ -403,7 +402,8 @@ def hasar_kaydi_olustur(takip_no, hasar_tipi, musteri_id):
     cursor = conn.cursor()
 
     try:
-        cursor.execute("SELECT id FROM hareket_cesitleri WHERE durum_adi LIKE '%Teslim%'")
+        cursor.execute("SELECT id FROM hareket_cesitleri "
+                       "WHERE durum_adi LIKE '%Teslim%'")
         hedef_durum = cursor.fetchone()
 
         if not hedef_durum:
@@ -411,7 +411,8 @@ def hasar_kaydi_olustur(takip_no, hasar_tipi, musteri_id):
 
         teslim_edildi_id = hedef_durum['id']  # Örn: 4 dönecektir
 
-        cursor.execute("SELECT durum_id, siparis_no FROM kargo_takip WHERE takip_no = ?", (takip_no,))
+        cursor.execute("SELECT durum_id, siparis_no "
+                       "FROM kargo_takip WHERE takip_no = ?", (takip_no,))
         kargo = cursor.fetchone()
 
         if not kargo:
@@ -447,14 +448,18 @@ def iade_islemi_baslat(no, sebep, musteri_id, user_role):
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT durum_adi FROM kargo_takip JOIN hareket_cesitleri ON durum_id = id WHERE takip_no = ? OR siparis_no = ?",
+            "SELECT durum_adi FROM kargo_takip"
+            " JOIN hareket_cesitleri "
+            "ON durum_id = id WHERE takip_no = ? OR siparis_no = ?",
             (no, no)).fetchone()
         if not row: return "Kayıt bulunamadı."
         if any(d in row['durum_adi'] for d in ["DAGITIMDA", "TRANSFER", "YOLDA", "HAZIRLANIYOR"]):
             return "Kargo henüz teslim edilmediği için iade başlatılamaz."
         bugun = datetime.now().strftime('%Y-%m-%d')
         conn.execute(
-            "INSERT INTO iade_talepleri (siparis_no, olusturan_musteri_id, sebep, durum, tarih) VALUES (?, ?, ?, 'ONAY_BEKLIYOR', ?)",
+            "INSERT INTO iade_talepleri "
+            "(siparis_no, olusturan_musteri_id, sebep, "
+            "durum, tarih) VALUES (?, ?, ?, 'ONAY_BEKLIYOR', ?)",
             (no, safe_id, sebep, bugun))
         conn.commit()
         return f"İade talebi oluşturuldu."
@@ -468,12 +473,16 @@ def kargo_iptal_et(no):
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT h.durum_adi FROM kargo_takip k JOIN hareket_cesitleri h ON k.durum_id = h.id WHERE k.takip_no = ? OR k.siparis_no = ?",
+            "SELECT h.durum_adi FROM kargo_takip k "
+            "JOIN hareket_cesitleri h ON k.durum_id = h.id "
+            "WHERE k.takip_no = ? OR k.siparis_no = ?",
             (no, no)).fetchone()
         if not row: return "Kayıt bulunamadı."
         if row['durum_adi'] == "TESLIM_EDILDI": return "Kargo teslim edildiği için iptal edilemez."
         if "IPTAL" in row['durum_adi']: return "Zaten iptal edilmiş."
-        conn.execute("UPDATE kargo_takip SET durum_id = 8 WHERE takip_no = ? OR siparis_no = ?", (no, no))
+        conn.execute("UPDATE kargo_takip "
+                     "SET durum_id = 8 WHERE takip_no = ? "
+                     "OR siparis_no = ?", (no, no))
         conn.commit()
         return "Kargo başarıyla İPTAL EDİLMİŞTİR. Prosedür gereği kargo ücret iadesi yapılmamaktadır."
     except Exception as e:
@@ -542,7 +551,9 @@ def bildirim_ayari_degistir(tip, musteri_id):
 
     conn = get_db_connection()
     try:
-        conn.execute("UPDATE musteriler SET bildirim_tercihi = ? WHERE musteri_id = ?", (final_tip, musteri_id))
+        conn.execute("UPDATE musteriler "
+                     "SET bildirim_tercihi = ? "
+                     "WHERE musteri_id = ?", (final_tip, musteri_id))
         conn.commit()
         return f"Bildirim tercihiniz başarıyla '{final_tip}' olarak güncellenmiştir."
     except Exception as e:
@@ -602,11 +613,13 @@ def yanlis_teslimat_bildirimi(no, dogru_adres, musteri_id):
 
         bugun = datetime.now().strftime('%Y-%m-%d')
         sikayet_query = """
-            INSERT INTO sikayetler (siparis_no, olusturan_musteri_id, konu, tarih, durum, tip, aciklama) 
+            INSERT INTO sikayetler (siparis_no, olusturan_musteri_id, 
+            konu, tarih, durum, tip, aciklama) 
             VALUES (?, ?, ?, ?, 'ACIL_MUDAHALE', 'YANLIS_ADRES', ?)
         """
         konu_basligi = f"[KRİTİK] Yanlış Adres Bildirimi - {durum_adi}"
-        detayli_aciklama = f"Kullanıcı adresin yanlış olduğunu bildirdi. Sistem, adresi '{dogru_adres}' olarak güncelledi. Kurye uyarılmalı."
+        detayli_aciklama = (f"Kullanıcı adresin yanlış olduğunu bildirdi. "
+                            f"Sistem, adresi '{dogru_adres}' olarak güncelledi. Kurye uyarılmalı.")
 
         cursor.execute(sikayet_query, (no, safe_id, konu_basligi, bugun, detayli_aciklama))
 
@@ -614,7 +627,7 @@ def yanlis_teslimat_bildirimi(no, dogru_adres, musteri_id):
 
         if "TESLIM" in durum_adi:
             return (f"Dikkat! Kargonuz sistemde 'Teslim Edildi' görünüyor ancak adres hatası bildirdiniz. "
-                    f"Acil durum kaydı (#KRITIK) oluşturarak bölge operasyon müdürüne ilettim. "
+                    f"Acil durum kaydı oluşturarak bölge operasyon müdürüne ilettim. "
                     f"Hatalı teslimatı geri almak için ekiplerimiz hemen harekete geçecektir.")
         else:
             return (f"Endişelenmeyin, müdahale ettim. "
@@ -901,7 +914,7 @@ def evde_olmama_bildirimi(no):
 
     try:
         query = """
-            SELECT k.takip_no, k.durum_id, k.tahmini_teslim, h.durum_adi 
+            SELECT k.takip_no, k.durum_id, k.tahmini_teslim, h.durum_adi s
             FROM kargo_takip k
             JOIN hareket_cesitleri h ON k.durum_id = h.id
             WHERE k.takip_no = ? OR k.siparis_no = ?
@@ -941,10 +954,12 @@ def evde_olmama_bildirimi(no):
                 oncelik_puani = 2 
             WHERE takip_no = ?
         """
-        cursor.execute(update_query, (yeni_tarih_str, yeni_durum_id, gercek_takip_no))
+        cursor.execute(update_query, (yeni_tarih_str,
+                                      yeni_durum_id, gercek_takip_no))
 
         log_query = """
-            INSERT INTO kargo_hareketleri (takip_no, islem_tarihi, islem_yeri, islem_tipi, aciklama, hedef_sube_id)
+            INSERT INTO kargo_hareketleri (takip_no, islem_tarihi, 
+            islem_yeri, islem_tipi, aciklama, hedef_sube_id)
             VALUES (?, datetime('now'), 'Mobil Asistan', 'Erteleme', ?, 0)
         """
         cursor.execute(log_query, (gercek_takip_no, aciklama_hareket))
@@ -973,7 +988,8 @@ def supervizor_talebi(ad, telefon):
 
         musteri_id = 0
 
-        row = conn.execute("SELECT musteri_id, ad_soyad FROM musteriler WHERE telefon = ?", (tel_temiz,)).fetchone()
+        row = conn.execute("SELECT musteri_id, ad_soyad FROM "
+                           "musteriler WHERE telefon = ?", (tel_temiz,)).fetchone()
 
         if row:
             db_ad = metin_temizle(row['ad_soyad'])
@@ -987,7 +1003,8 @@ def supervizor_talebi(ad, telefon):
 
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO supervisor_gorusmeleri (musteri_id, girilen_ad, girilen_telefon, talep_tarihi) 
+            INSERT INTO supervisor_gorusmeleri 
+            (musteri_id, girilen_ad, girilen_telefon, talep_tarihi) 
             VALUES (?, ?, ?, ?)
         ''', (musteri_id, ad, tel_temiz, su_an))
 
@@ -1035,13 +1052,17 @@ def kurye_gelmedi_sikayeti(no, musteri_id):
         konu = f"[ACİL-KURYE GELMEDİ] {no} nolu kargo için müşteri adreste beklemiş ancak kurye uğramamış."
 
         cursor.execute("""
-            INSERT INTO sikayetler (siparis_no, olusturan_musteri_id, konu, tip, tarih, durum) 
-            VALUES (?, ?, ?, 'KURYE_GELMEDI', datetime('now'), 'ACIL_ISLEM')
+            INSERT INTO sikayetler (siparis_no, olusturan_musteri_id, 
+            konu, tip, tarih, durum) 
+            VALUES (?, ?, ?, 'KURYE_GELMEDI', 
+            datetime('now'), 'ACIL_ISLEM')
         """, (no, musteri_id, konu))
 
         cursor.execute("""
-            INSERT INTO supervisor_gorusmeleri (musteri_id, girilen_ad, girilen_telefon, talep_tarihi, durum)
-            VALUES (?, 'Sistem Oto', 'Kurye Sikayeti', datetime('now'), 'OTOMATIK_ESKALASYON')
+            INSERT INTO supervisor_gorusmeleri (musteri_id, girilen_ad, 
+            girilen_telefon, talep_tarihi, durum)
+            VALUES (?, 'Sistem Oto', 'Kurye Sikayeti', 
+            datetime('now'), 'OTOMATIK_ESKALASYON')
         """, (musteri_id,))
 
         conn.commit()
@@ -1058,10 +1079,6 @@ def kurye_gelmedi_sikayeti(no, musteri_id):
 
 def hizli_teslimat_ovgu():
     return "Hizmetimizden memnun kalmanıza çok sevindik! Güzel geri bildiriminiz için teşekkür ederiz. İyi günler dileriz."
-
-def kimlik_dogrulama_sorunu(): return "Kimlik doğrulama sorunları genellikle yanlış bilgi girişinden kaynaklanır. Lütfen bilgilerinizi kontrol ederek tekrar deneyin. Sorun devam ederse sizi temsilciye aktarabiliriz."
-
-def yurt_disi_kargo_kosul(): return "Yurt dışı gönderileri için fiyatlandırma ülkeye göre değişir. Süreler ve gümrük işlemleriyle ilgili detaylı bilgi ve gerekli belge listesi size SMS ile gönderilmiştir."
 
 def alici_bilgisi_guncelle(no, yeni_veri, user_role, bilgi_turu="isim"):
     if user_role != 'gonderici':
@@ -1109,17 +1126,21 @@ def alici_bilgisi_guncelle(no, yeni_veri, user_role, bilgi_turu="isim"):
         else:
             return "Geçersiz işlem türü."
 
-        cursor.execute("INSERT INTO musteriler (ad_soyad, telefon, email) VALUES (?, ?, ?)",
+        cursor.execute("INSERT INTO musteriler "
+                       "(ad_soyad, telefon, email) VALUES (?, ?, ?)",
                        (yeni_ad, yeni_tel, "bilinmiyor@kargo.com"))
 
         yeni_musteri_id = cursor.lastrowid
 
-        cursor.execute("UPDATE siparisler SET alici_id = ? WHERE siparis_no = ?", (yeni_musteri_id, siparis_no))
+        cursor.execute("UPDATE siparisler SET alici_id = ? WHERE siparis_no = ?",
+                       (yeni_musteri_id, siparis_no))
 
         if takip_no:
             log_query = """
-                INSERT INTO kargo_hareketleri (takip_no, islem_tarihi, islem_yeri, islem_tipi, aciklama, hedef_sube_id)
-                VALUES (?, datetime('now'), 'Çağrı Merkezi', 'Alıcı Değişikliği', ?, 0)
+                INSERT INTO kargo_hareketleri (takip_no, islem_tarihi, 
+                islem_yeri, islem_tipi, aciklama, hedef_sube_id)
+                VALUES (?, datetime('now'), 'Çağrı Merkezi', 
+                'Alıcı Değişikliği', ?, 0)
             """
             cursor.execute(log_query, (takip_no, degisiklik_mesaji))
 
