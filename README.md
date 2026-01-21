@@ -67,17 +67,19 @@ cd ai_customerservice
 pip install -r requirements.txt
 ```
 
-###🛠️ Environment Configuration
+### 🛠️ Environment Configuration
 
 Create a .env file in the root directory:
 
+```bash
 GEMINI_API_KEY=your_actual_api_key_here
-
+```
 Ensure .env is included in .gitignore to prevent key exposure.
 
 
-Project Structure
+### 📂 Project Structure
 
+```bash
 ai_customerservice/
 │
 ├── webhook.py
@@ -98,31 +100,22 @@ ai_customerservice/
 │
 └── assets/
     └─ Screenshots & demo media
+```
 
-
-Running the Application
+### 🚀 Running the Application
 
 1) Initialize the Database
-
+```bash
 python db_simulasyon_kurulum.py
-
+```
 2) Start the Server
-
+```bash
 python webhook.py
-
+```
 3) Open Web Interface
-
+```bash
 http://127.0.0.1:5000
-
-
-Features Demonstrated
-
-- LLM-powered conversational agent with structured intent handling
-- Classical ML integration inside LLM-driven workflows
-- Context-aware multi-turn conversation management
-- Database-backed customer service simulation
-- Voice-enabled assistant responses
-
+```
 
 Notes
 
@@ -130,15 +123,17 @@ This project is developed for academic and demonstration purposes.
 Model performance and dataset size can be extended for production deployment.
 
 
-Possible Future Improvements
+### 🛠️ Future Improvements
+[ ] Docker containerization for easier deployment.
 
-- Docker containerization
-- REST API documentation (Swagger)
-- Multi-language support
-- Real shipment tracking API integration
+[ ] REST API documentation using Swagger/OpenAPI.
+
+[ ] Multi-language support for global use cases.
+
+[ ] Integration with real-world shipment tracking APIs.
 
 
-Author
+### 👤 Author
 
 Doğa Ece Koca
 GitHub: https://github.com/dogaece-koca
@@ -146,12 +141,3 @@ LinkedIn: (optional — add if you want)
 
 If you find this project useful, consider giving it a star!
 
-
-Assets Folder Guide
-
-assets/
-├── demo.gif
-├── demo_video.mp4
-├── screenshot_chat.png
-├── screenshot_voice.png
-└── screenshot_db.png
