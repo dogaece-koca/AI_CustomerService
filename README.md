@@ -65,6 +65,7 @@ Or watch the demo video:
 git clone https://github.com/dogaece-koca/ai_customerservice.git
 cd ai_customerservice
 pip install -r requirements.txt
+```
 
 ###🛠️ Environment Configuration
 
