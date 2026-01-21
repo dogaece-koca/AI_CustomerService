@@ -1,57 +1,99 @@
 # Gemini-Powered Customer Service System
 
-This project is a comprehensive intelligent assistant developed for the **"Applications of Artificial Intelligence"** course. It bridges the gap between modern Large Language Models (LLMs) and traditional Machine Learning (ML) to automate complex customer service workflows, including logistics tracking, sentiment-driven interactions, and predictive analytics.
+This project is an end-to-end intelligent customer service assistant that integrates modern Large Language Models (LLMs) with traditional Machine Learning (ML) algorithms. Developed as part of the "Applications of Artificial Intelligence" course, it demonstrates how to build stateful, multimodal agents for industrial use cases such as logistics and sentiment-driven customer support.
 
-## 🚀 Key Features
+------------------------------------------------------------
 
-* **Gemini-Flash Integration:** Leverages the **Google Gemini-Flash API** for advanced Natural Language Understanding (NLU) and generating context-aware, empathetic responses.
-* **Hybrid Machine Learning Architecture:**
-    * **Sentiment Analysis:** A custom-trained **Logistic Regression** model (using Scikit-learn) that detects user emotions (Happy, Angry, Neutral) to adjust response tone dynamically.
-    * **Delivery Prediction:** A **Linear Regression** model that estimates package arrival times based on historical logistics data.
-* **Multimodal Capabilities:** Integrated **gTTS (Google Text-to-Speech)** to provide natural language voice responses alongside text-based chat.
-* **State-Aware Dialogue Management:** Implements session-based tracking to manage **multi-turn conversations**, ensuring the assistant remembers previous user inputs and context.
-* **Operational Automation:** Supports functional tools such as real-time cargo tracking, international tax calculation, and automated complaint filing linked to a backend database.
+KEY TECHNICAL HIGHLIGHTS
 
-## 🛠 Technology Stack
+- Hybrid AI Architecture: Combines Google Gemini API for natural language generation with custom Scikit-learn models (Logistic Regression & Linear Regression) for sentiment analysis and delivery time forecasting.
+- Multimodal Interaction: Integrated gTTS (Google Text-to-Speech) to provide natural-sounding voice responses alongside text-based chat.
+- State-Aware Dialogue: Session-based conversation management to maintain context across multi-turn user interactions.
+- Operational Intelligence: Automated modules for cargo tracking, tax calculation, and database-driven complaint logging.
 
-* **Backend:** Python, Flask
-* **Generative AI:** Google Gemini API (Gemini-Flash)
-* **Machine Learning:** Scikit-learn, Pandas, NumPy
-* **Database:** SQLite (for customer records and complaint logs)
-* **Voice Processing:** gTTS (Google Text-to-Speech)
-* **Frontend:** HTML5, CSS3, JavaScript
+------------------------------------------------------------
 
-## 📂 Project Structure
+PREREQUISITES & INSTALLATION
 
-| File/Folder | Description |
-| :--- | :--- |
-| `webhook.py` | The main Flask server and API routing hub. |
-| `modules/ml_modulu.py` | Training and prediction logic for Logistic and Linear Regression models. |
-| `modules/gemini_ai.py` | LLM prompt engineering and Gemini API orchestration. |
-| `modules/database.py` | Database schema management and CRUD operations. |
-| `templates/index.html` | The web-based chat interface. |
+API KEY ACQUISITION
 
-## ⚙️ Setup and Installation
+This project requires a Google Gemini API Key.
 
-1.  **Clone the repository:**
-    ```bash
-    git clone [https://github.com/dogaece-koca/customerservice_ai.git](https://github.com/dogaece-koca/customerservice_ai.git)
-    ```
-2.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  **Configure API Key:**
-    Insert your Google AI Studio API key in the `modules/gemini_ai.py` file.
-4.  **Run the application:**
-    ```bash
-    python webhook.py
-    ```
+1) Go to: https://aistudio.google.com/
+2) Log in with your Google account.
+3) Click "Get API Key" and generate a new key.
 
-## 📝 Learning Objectives
+------------------------------------------------------------
 
-This project was engineered to demonstrate proficiency in:
-* Integrating state-of-the-art LLMs into production-ready web frameworks.
-* Implementing **Hybrid AI** systems that combine heuristic rules, custom ML models, and Generative AI.
-* Designing stateful conversational agents for complex business logic.
-* Applying Data Pre-processing and Feature Engineering for real-world predictive tasks.
+CLONE THE REPOSITORY
+
+git clone https://github.com/dogaece-koca/ai_customerservice.git
+cd ai_customerservice
+pip install -r requirements.txt
+
+------------------------------------------------------------
+
+ENVIRONMENT CONFIGURATION
+
+Create a file named .env in the root directory and add:
+
+GEMINI_API_KEY=your_actual_api_key_here
+
+Ensure .env is included in .gitignore to prevent key exposure.
+
+------------------------------------------------------------
+
+PROJECT STRUCTURE
+
+webhook.py
+Main Flask server handling API routing and frontend interaction
+
+modules/gemini_ai.py
+LLM orchestration and prompt engineering logic
+
+modules/ml_modulu.py
+Training and inference for Logistic & Linear Regression models
+
+modules/database.py
+SQLite integration for persistence of customer and complaint data
+
+------------------------------------------------------------
+
+RUNNING THE APPLICATION
+
+INITIALIZE THE DATABASE
+
+python db_simulasyon_kurulum.py
+
+START THE SERVER
+
+python webhook.py
+
+ACCESS THE WEB INTERFACE
+
+Open in your browser:
+http://127.0.0.1:5000
+
+------------------------------------------------------------
+
+FEATURES DEMONSTRATED
+
+- LLM-powered conversational agent with structured intent handling
+- Classical ML integration inside LLM-driven workflows
+- Context-aware multi-turn conversation management
+- Database-backed customer service simulation
+- Voice-enabled assistant responses
+
+------------------------------------------------------------
+
+NOTES
+
+This project is developed for academic and demonstration purposes.
+Model performance and dataset size can be extended for production deployment.
+
+------------------------------------------------------------
+
+AUTHOR
+
+Doğa Ece Koca
+GitHub: https://github.com/dogaece-koca
